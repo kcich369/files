@@ -1,0 +1,26 @@
+# ---------- build ----------
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /repo
+
+# Kopiujemy całe repo (proste i pewne na start)
+COPY . .
+
+# ZMIEŃ ścieżkę do csproj!
+ARG PROJECT_PATH=src/ServiceA/ServiceA.Api.csproj
+
+RUN dotnet restore "$PROJECT_PATH"
+RUN dotnet publish "$PROJECT_PATH" -c Release -o /app/publish
+
+# ---------- runtime ----------
+FROM mcr.microsoft.com/dotnet/aspnet:8.0
+WORKDIR /app
+
+# Kopiujemy tylko wynik publish z etapu build
+COPY --from=build /app/publish .
+
+# Kestrel ma słuchać na porcie 8080 w kontenerze
+ENV ASPNETCORE_URLS=http://+:8080
+EXPOSE 8080
+
+# ZMIEŃ nazwę DLL jeśli inna niż csproj
+ENTRYPOINT ["dotnet", "ServiceA.Api.dll"]
