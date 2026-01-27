@@ -16,3 +16,8 @@ docker run --rm -d \
   -e ASPIRE_DASHBOARD_ALLOW_ANONYMOUS=true \
   --name aspire-dashboard \
   mcr.microsoft.com/dotnet/aspire-dashboard:latest
+
+
+docker run --rm -it -p 18888:18888 -p 4317:18889 -d --name aspire-dashboard \
+  -e ASPIRE_DASHBOARD_ALLOW_ANONYMOUS=true \
+  mcr.microsoft.com/dotnet/aspire-dashboard:latest
