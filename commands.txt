@@ -8,3 +8,11 @@ docker compose -f docker-compose.infra.yml down
 
 docker compose -f docker-compose.infra.yml ps
 docker compose -f docker-compose.infra.yml logs -f
+
+docker run --rm -d \
+  -p 18888:18888 \
+  -p 4317:18889 \
+  -p 4318:18890 \
+  -e ASPIRE_DASHBOARD_ALLOW_ANONYMOUS=true \
+  --name aspire-dashboard \
+  mcr.microsoft.com/dotnet/aspire-dashboard:latest
