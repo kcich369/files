@@ -13,6 +13,24 @@ services:
 volumes:
   sql_data:
 
+public static string TrimErrorMessage(string value)
+{
+    if (string.IsNullOrEmpty(value))
+        return value;
+
+    const int partLength = 1991;
+
+    if (value.Length <= partLength * 2)
+        return value;
+
+    return value.Substring(0, partLength) 
+           + "..." 
+           + value.Substring(value.Length - partLength);
+}
+
+return value.Substring(0, partLength)
+       + "\n...\n"
+       + value.Substring(value.Length - partLength);
 
 SELECT 
     t.NAME AS TableName,
