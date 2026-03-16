@@ -54,3 +54,24 @@ services:
 
 volumes:
   sql_data:
+
+
+
+
+Cześć, mam jedną myśl, którą chciałem z Tobą skonsultować.
+
+Z racji tego, że w projekcie jest sporo tematów – szczególnie tych bardziej wydajnościowych i architektonicznych – i tak w praktyce często siedzę dłużej, żeby domknąć ważne rzeczy w sprintach.
+
+Zastanawiałem się, czy nie byłoby sensowne rozważyć rozwiązania, w którym mógłbym formalnie realizować trochę więcej godzin w projekcie – np. w formie dodatkowego zakresu (powiedzmy ~1/4 etatu). Nie musiałyby to być klasyczne nadgodziny – może dałoby się to rozwiązać np. przez dodatkową umowę z kontraktornią bankową.
+
+Myślę o tym głównie dlatego, że w obecnym sprincie dobrze było widać sytuację – standardowo bierzemy ~14–18 SP na osobę, a finalnie u mnie było ok. 60 SP (po różnych zmianach i tematach, które trzeba było dowieźć). Były to rzeczy kluczowe dla projektu, więc i tak naturalnie spadły do mnie.
+
+Z mojej strony to jest ok – mam czas i chętnie poświęcę go więcej na ten projekt. W praktyce i tak już dużo kontekstu mam w głowie, więc często jest to szybsze niż wdrażanie kolejnej osoby i późniejsza weryfikacja tematów.
+
+Dodatkowy zakres godzin pozwoliłby mi też spokojniej realizować różne rzeczy poza samymi historyjkami sprintowymi – np. usprawnienia w dev-infrastrukturze, performance improvements czy ogarnianie różnych “wrzutek”, które pojawiają się w trakcie.
+
+Dla mnie to też jest wygodne, bo mogę skupić się na jednym projekcie zamiast przełączać kontekst między różnymi rzeczami.
+
+Jeśli to w ogóle miałoby sens z Twojej perspektywy, można by nawet spróbować w formie testowej – np. na pół roku.
+
+Daj znać co myślisz – jestem ciekaw czy w ogóle taka opcja byłaby realna organizacyjnie.
