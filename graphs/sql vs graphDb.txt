@@ -1,0 +1,653 @@
+# POC KYC/AML – SQL Server vs natywna baza grafowa
+
+## Cel
+
+Celem rozwiązania jest prezentacja oraz rozwój sieci powiązań pomiędzy klientami, osobami i podmiotami w kontekście KYC/AML.
+
+Dane źródłowe znajdują się obecnie w SQL Serverze. Docelowy system powinien jednak pozwalać nie tylko na wyświetlenie istniejących relacji, ale również na:
+
+* eksplorowanie kolejnych poziomów sieci,
+* filtrowanie relacji,
+* dodawanie brakujących osób i podmiotów,
+* dodawanie nowych relacji,
+* przechowywanie elementów nieistniejących w systemie źródłowym,
+* potencjalną analizę całych sieci powiązań.
+
+Dla POC rozważamy dwa główne kierunki:
+
+1. pozostanie przy modelu relacyjnym – SQL Server,
+2. utworzenie osobnego modelu w natywnej bazie grafowej.
+
+---
+
+# 1. SQL Server
+
+SQL Server jest obecnym źródłem danych i pozwala zrealizować podstawowe wymagania związane z wizualizacją grafu.
+
+Za pomocą klasycznych JOIN-ów oraz Recursive CTE możemy przechodzić przez kolejne poziomy relacji. SQL Server pozwala kontrolować maksymalną głębokość rekursji za pomocą `MAXRECURSION`. Jednocześnie recursive CTE ma ograniczenia dotyczące konstrukcji dopuszczalnych w części rekursywnej zapytania, m.in. agregacji, `GROUP BY`, `TOP`, części typów JOIN czy podzapytań.
+
+## Co możemy zrobić za pomocą SQL?
+
+### 1. Wyświetlenie bezpośrednich powiązań
+
+Pytanie biznesowe:
+
+**„Z kim powiązany jest klient X?”**
+
+Przykład:
+
+`X → Y`
+
+`X → Z`
+
+To jest bardzo prosty i naturalny przypadek dla SQL.
+
+---
+
+### 2. Pobranie kilku poziomów grafu
+
+Pytanie:
+
+**„Pokaż sieć klienta do 3 lub 4 poziomu.”**
+
+Możemy wykonać Recursive CTE:
+
+`X → A → B → C → D`
+
+Jest to jak najbardziej wykonalne.
+
+Przy małej, z góry ograniczonej liczbie poziomów SQL może działać bardzo dobrze.
+
+---
+
+### 3. Expand Node
+
+Użytkownik klika podmiot:
+
+`ABC Sp. z o.o.`
+
+i system pobiera jego bezpośrednie relacje.
+
+To jest zwykłe zapytanie o sąsiadów danego podmiotu i SQL obsłuży je bardzo dobrze.
+
+---
+
+### 4. Lazy Loading
+
+Nie pobieramy całej sieci od razu.
+
+Pobieramy:
+
+`X → A → B`
+
+a po kliknięciu B:
+
+`B → C → D`
+
+Również nie stanowi to problemu dla SQL.
+
+---
+
+### 5. Filtrowanie relacji
+
+Możemy zadać pytanie:
+
+**„Pokaż tylko relacje typu pełnomocnik i beneficjent rzeczywisty.”**
+
+Czyli w uproszczeniu:
+
+`WHERE RelationType IN (...)`
+
+Jest to jeden z najmocniejszych przypadków klasycznego SQL.
+
+---
+
+### 6. Dodawanie własnych osób i podmiotów
+
+Możemy utworzyć własne tabele:
+
+`GraphNode`
+
+`GraphEdge`
+
+i przechowywać elementy, które nie występują w systemie źródłowym.
+
+SQL nie stanowi tutaj ograniczenia.
+
+---
+
+# Co zaczyna być trudniejsze w SQL?
+
+Problem pojawia się, gdy zamiast pobierania danych zaczynamy **analizować topologię sieci**.
+
+---
+
+## 7. Path Finding – wyszukiwanie ścieżki
+
+Pytanie:
+
+**„Czy klient X jest w jakikolwiek sposób powiązany z klientem Y?”**
+
+Przykład:
+
+`X → A → B → C → Y`
+
+W SQL można to zrobić poprzez rekursję.
+
+Problem pojawia się wraz ze wzrostem wymagań:
+
+**„Znajdź ścieżkę X → Y maksymalnie przez 7 poziomów, ale tylko przez wybrane rodzaje relacji i bez ponownego odwiedzania tego samego podmiotu.”**
+
+Nadal jest to możliwe, ale zapytanie oraz obsługa przebytych ścieżek stają się coraz bardziej skomplikowane.
+
+---
+
+## 8. Common Neighbour – wspólne powiązanie
+
+Pytanie:
+
+**„Czy firmy A i B mają wspólnego beneficjenta?”**
+
+Przykład:
+
+`A ← Jan → B`
+
+SQL bardzo dobrze poradzi sobie z prostym wariantem takiego zapytania.
+
+Jeżeli jednak zaczniemy pytać:
+
+**„Czy A i B są połączone poprzez wspólne podmioty znajdujące się maksymalnie trzy relacje od każdej z firm?”**
+
+problem robi się znacznie bardziej grafowy.
+
+---
+
+## 9. Cycle Detection – wykrywanie cykli
+
+Przykład:
+
+`A → B → C → D → A`
+
+W kontekście KYC/AML może to oznaczać interesującą strukturę własności lub kontroli.
+
+SQL może wykrywać cykle, ale musimy samodzielnie kontrolować odwiedzone elementy oraz budować ścieżkę.
+
+Nie jest to podstawowa abstrakcja modelu relacyjnego.
+
+---
+
+# Główne ograniczenie SQL
+
+SQL nie blokuje wykonania tych operacji.
+
+Problem brzmi:
+
+**im bardziej analizujemy relacje, tym więcej mechanizmów grafowych implementujemy sami.**
+
+Z czasem Graph Service zaczyna implementować:
+
+* kontrolę odwiedzonych Node,
+* Traversal,
+* Path Finding,
+* Cycle Detection,
+* deduplikację,
+* ograniczanie głębokości,
+* filtrowanie ścieżek,
+* analizowanie sąsiadów.
+
+Oznacza to rosnącą złożoność kodu i zapytań.
+
+---
+
+# Dodatkowy problem – współdzielona baza SQL
+
+Obecna baza SQL jest używana również przez inne systemy.
+
+Zapytania:
+
+* wielopoziomowe,
+* rekursywne,
+* eksplorujące duże fragmenty sieci,
+
+mogą konkurować o zasoby z pozostałymi workloadami.
+
+Nie oznacza to automatycznie, że SQL będzie miał problemy wydajnościowe – wymaga to benchmarku.
+
+Architektonicznie pojawia się jednak ryzyko:
+
+**rozwój platformy analitycznej KYC/AML może zwiększać obciążenie bazy będącej jednocześnie systemem źródłowym dla innych aplikacji.**
+
+Można oczywiście postawić osobną bazę SQL.
+
+Rozwiązuje to problem izolacji.
+
+Nie rozwiązuje jednak problemu rosnącej złożoności operacji grafowych.
+
+---
+
+# 2. Natywna baza grafowa
+
+W natywnej bazie grafowej podstawowym modelem są:
+
+**Node – Węzeł**
+
+oraz:
+
+**Edge / Relationship – Krawędź / Relacja**
+
+Przykład:
+
+`(Jan)-[:PEŁNOMOCNIK]->(ABC)`
+
+Nie rekonstruujemy sieci z tabel podczas każdego zapytania.
+
+Sieć jest podstawowym modelem, który odpytujemy.
+
+---
+
+# Podstawowe możliwości
+
+## 1. Traversal – przechodzenie po grafie
+
+Możemy powiedzieć:
+
+**„Pokaż wszystko maksymalnie 4 relacje od klienta X.”**
+
+Czyli:
+
+`X → ? → ? → ? → ?`
+
+Variable-length paths są bezpośrednio wspierane przez Cypher w Neo4j.
+
+Możemy dodatkowo ograniczać typ relacji:
+
+`PEŁNOMOCNIK`
+
+`WŁAŚCICIEL`
+
+`BENEFICJENT`
+
+itd.
+
+To jest podstawowa operacja grafowa, a nie ręcznie budowana rekursja.
+
+---
+
+# 2. Path Existence
+
+Pytanie:
+
+**„Czy A jest w ogóle połączone z B?”**
+
+Nie musimy wcześniej wiedzieć, przez jakie podmioty prowadzi połączenie.
+
+Możemy szukać:
+
+`A → ... → B`
+
+To bardzo interesujący przypadek dla KYC/AML.
+
+---
+
+# 3. Shortest Path – najkrótsza ścieżka
+
+Pytanie:
+
+**„Jak najkrócej klient X jest powiązany z firmą Y?”**
+
+Możemy otrzymać:
+
+`X → Firma A → Osoba B → Y`
+
+zamiast przeglądać wszystkie możliwe kombinacje relacji.
+
+Path Finding jest jedną z podstawowych kategorii algorytmów oferowanych również przez Neo4j Graph Data Science.
+
+---
+
+# 4. Multiple Paths – wiele sposobów połączenia
+
+Jeszcze ciekawsze pytanie:
+
+**„Czy X i Y są połączeni tylko w jeden sposób, czy istnieje kilka niezależnych ścieżek?”**
+
+Na przykład:
+
+`X → A → Y`
+
+oraz:
+
+`X → B → C → Y`
+
+Dla analizy powiązań może to być znacznie bardziej interesujące niż samo stwierdzenie, że istnieje relacja.
+
+---
+
+# 5. Common Neighbour – wspólny sąsiad
+
+Pytanie:
+
+**„Czy dwie firmy mają wspólną osobę?”**
+
+`Firma A ← Jan → Firma B`
+
+Albo:
+
+**„Którzy klienci mają wielu wspólnych sąsiadów?”**
+
+To naturalny rodzaj zapytania grafowego.
+
+---
+
+# 6. Cycle Detection – cykle
+
+Możemy wyszukiwać struktury:
+
+`A → B → C → A`
+
+albo:
+
+`A → B → C → D → A`
+
+W przyszłości może to pozwalać identyfikować nietypowe struktury własności, kontroli lub przepływu relacji.
+
+---
+
+# 7. Pattern Matching – wyszukiwanie wzorców
+
+To jedna z największych przewag grafu.
+
+Możemy nie szukać konkretnego klienta, tylko **struktury**.
+
+Przykład:
+
+`Person → Company → Company ← Person`
+
+i zapytać:
+
+**„Znajdź wszystkie miejsca w naszej bazie, gdzie występuje taki układ.”**
+
+To zmienia sposób myślenia z:
+
+**„znajdź rekord”**
+
+na:
+
+**„znajdź strukturę relacji”.**
+
+---
+
+# 8. Connected Components – spójne grupy
+
+Możemy zapytać:
+
+**„Które podmioty tworzą ze sobą jedną połączoną sieć?”**
+
+Przykład:
+
+`A-B-C-D-E`
+
+oraz osobno:
+
+`X-Y-Z`
+
+Są to dwie niezależne Connected Components.
+
+Neo4j GDS udostępnia m.in. Weakly Connected Components oraz Strongly Connected Components.
+
+W KYC/AML może to pomóc spojrzeć na klienta nie jako pojedynczą osobę, ale jako element całej grupy powiązanych podmiotów.
+
+---
+
+# 9. Community Detection – wykrywanie społeczności / klastrów
+
+Jeszcze krok dalej.
+
+Graf może zawierać tysiące podmiotów, ale pewne z nich są ze sobą znacznie silniej powiązane.
+
+Algorytmy takie jak Louvain, Leiden czy Label Propagation mogą wykrywać takie grupy. Neo4j GDS posiada całą kategorię algorytmów Community Detection.
+
+Pytanie biznesowe:
+
+**„Czy możemy automatycznie wykryć grupy podmiotów tworzące silnie powiązane struktury?”**
+
+To może być bardzo interesujące w przyszłym systemie KYC/AML.
+
+---
+
+# 10. Centrality – znaczenie podmiotu w sieci
+
+Nie każdy Node jest równie istotny.
+
+Możemy mieć:
+
+`A → X`
+
+`B → X`
+
+`C → X`
+
+`D → X`
+
+`E → X`
+
+X może być centralnym elementem sieci, mimo że na pierwszy rzut oka nie był przedmiotem naszej analizy.
+
+Algorytmy Centrality pomagają znajdować takie podmioty.
+
+Neo4j GDS udostępnia m.in.:
+
+* Degree Centrality,
+* Betweenness Centrality,
+* Closeness Centrality,
+* PageRank,
+* HITS,
+* Bridges,
+* Articulation Points.
+
+Pytania biznesowe mogą więc brzmieć:
+
+**„Która osoba jest najbardziej centralnym elementem tej sieci?”**
+
+**„Który podmiot łączy dwie pozornie niezależne grupy?”**
+
+---
+
+# 11. Bridges – mosty pomiędzy sieciami
+
+Wyobraźmy sobie:
+
+`grupa A --- X --- grupa B`
+
+Usunięcie X powoduje, że grupy przestają być ze sobą połączone.
+
+Można więc znaleźć podmioty lub relacje będące kluczowym łącznikiem pomiędzy częściami sieci.
+
+To może odkrywać relacje, których znaczenie trudno zauważyć podczas zwykłego przeglądania kolejnych poziomów grafu.
+
+---
+
+# 12. Node Similarity – podobieństwo podmiotów
+
+Możemy porównywać podmioty na podstawie ich otoczenia.
+
+Przykładowo:
+
+Firma A jest powiązana z:
+
+`Jan, Anna, XYZ`
+
+Firma B:
+
+`Jan, Anna, XYZ, Piotr`
+
+Strukturalnie te firmy są do siebie bardzo podobne.
+
+Neo4j GDS udostępnia Node Similarity m.in. na podstawie Jaccard, Overlap i Cosine Similarity.
+
+Pytanie biznesowe:
+
+**„Czy istnieją inne podmioty mające niemal identyczną sieć powiązań?”**
+
+---
+
+# 13. Link Prediction – przewidywanie brakujących relacji
+
+Jest to bardziej przyszłościowy przypadek.
+
+Na podstawie istniejącej struktury grafu można próbować wskazywać:
+
+**„Które dwa podmioty prawdopodobnie powinny być ze sobą powiązane, mimo że nie posiadamy takiej relacji w danych?”**
+
+Neo4j GDS posiada również mechanizmy Graph Machine Learning i predykcji brakujących relacji.
+
+Nie jest to wymaganie obecnego POC, ale pokazuje możliwość dalszego rozwoju platformy.
+
+---
+
+# SQL vs Graph DB – najważniejsza różnica
+
+Nie jest prawdą:
+
+**„SQL nie potrafi Path Finding, a Graph DB potrafi”.**
+
+SQL może zaimplementować praktycznie wszystkie podstawowe przypadki.
+
+Prawdziwa różnica brzmi:
+
+### SQL
+
+Dane są przede wszystkim rekordami w tabelach.
+
+Relacje odtwarzamy za pomocą:
+
+`JOIN + Recursive CTE + logika aplikacyjna`
+
+Im bardziej skomplikowana analiza sieci, tym bardziej skomplikowane stają się zapytania.
+
+### Native Graph DB
+
+Sieć jest podstawowym modelem danych.
+
+Operujemy bezpośrednio na:
+
+`Node → Edge → Node → Edge → Node`
+
+Dlatego Traversal, Path Finding i Pattern Matching są naturalnymi operacjami systemu.
+
+---
+
+# Porównanie
+
+| Scenariusz                        |                          SQL |        Native Graph DB |
+| --------------------------------- | ---------------------------: | ---------------------: |
+| Pobranie danych klienta           |                 bardzo dobre |           bardzo dobre |
+| Bezpośrednie relacje              |                 bardzo dobre |           bardzo dobre |
+| Expand Node                       |                 bardzo dobre |           bardzo dobre |
+| 2–4 poziomy                       |           dobre/bardzo dobre |           bardzo dobre |
+| Filtrowanie typu relacji          |                 bardzo dobre |           bardzo dobre |
+| Dodanie Node/Edge                 |                 bardzo dobre |           bardzo dobre |
+| Path A → B                        |                      możliwe |              naturalne |
+| Variable-length Path              |       coraz bardziej złożone |              naturalne |
+| Shortest Path                     |                      możliwe |              naturalne |
+| Wiele alternatywnych ścieżek      |                  trudniejsze |              naturalne |
+| Cycle Detection                   |                      możliwe |              naturalne |
+| Pattern Matching                  |                  trudniejsze |           bardzo dobre |
+| Common Neighbours                 |                        dobre |           bardzo dobre |
+| Connected Components              | wymaga implementacji/analizy |       gotowe algorytmy |
+| Community Detection               | wymaga osobnej implementacji |       gotowe algorytmy |
+| Centrality                        | wymaga osobnej implementacji |       gotowe algorytmy |
+| Node Similarity                   | wymaga osobnej implementacji |       gotowe algorytmy |
+| Link Prediction                   |      osobny system/analityka | dostępny ekosystem GDS |
+| Rozwój w kierunku analizy KYC/AML |            rosnąca złożoność |     naturalny kierunek |
+
+---
+
+# Co SQL robi lepiej?
+
+Natywna baza grafowa nie zastępuje SQL we wszystkim.
+
+SQL nadal jest bardzo dobrym rozwiązaniem dla:
+
+* klasycznego CRUD,
+* raportowania tabelarycznego,
+* agregacji,
+* istniejących danych transakcyjnych,
+* prostych filtrów,
+* integracji z obecnym systemem,
+* przypadków, w których relacje nie są głównym przedmiotem analizy.
+
+Dlatego nie rekomendujemy migracji systemu źródłowego do Neo4j.
+
+---
+
+# Proponowana architektura
+
+SQL Server pozostaje systemem źródłowym:
+
+`Client`
+
+`Role`
+
+`Relation`
+
+`ReverseRelation`
+
+Dane potrzebne do sieci są mapowane do modelu grafowego:
+
+`Node`
+
+`Edge`
+
+i synchronizowane do osobnego Graph Store.
+
+Schemat:
+
+`SQL Server`
+
+`↓`
+
+`Synchronizacja / Mapping`
+
+`↓`
+
+`Graph Service`
+
+`↓`
+
+`Native Graph Database`
+
+`↓`
+
+`Graph API`
+
+`↓`
+
+`Angular`
+
+Dodatkowe osoby i podmioty, które nie istnieją w systemie źródłowym, mogą istnieć wyłącznie w modelu grafowym.
+
+---
+
+# Rekomendacja POC
+
+Rekomendowany kierunek POC to **natywna baza grafowa**.
+
+SQL Server powinien pozostać:
+
+1. systemem źródłowym,
+2. punktem odniesienia pozwalającym ocenić, czy Graph DB rzeczywiście daje wartość.
+
+Nie rekomendujemy budowania docelowej platformy bezpośrednio na współdzielonej bazie SQL Server, ponieważ potencjalne przyszłe operacje KYC/AML będą wymagały coraz bardziej intensywnego przechodzenia i analizowania sieci.
+
+Postawienie osobnego SQL Servera rozwiązałoby izolację wydajnościową, ale nadal pozostawiałoby problem implementowania logiki grafowej w modelu relacyjnym.
+
+Natywna baza grafowa daje natomiast możliwość rozpoczęcia od prostego:
+
+**„pokaż sieć klienta”**
+
+i stopniowego rozwoju w kierunku:
+
+**„analizuj strukturę sieci klienta”.**
+
+To właśnie tę hipotezę powinien zweryfikować POC.

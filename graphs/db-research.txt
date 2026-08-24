@@ -1,0 +1,392 @@
+Przeanalizowaliśmy pięć możliwych podejść do przechowywania i obsługi sieci powiązań KYC/AML:
+
+1. SQL Server – klasyczny model relacyjny + Recursive CTE
+2. SQL Server Graph
+3. PostgreSQL – klasyczny model relacyjny
+4. PostgreSQL + Apache AGE
+5. Neo4j – natywna baza grafowa
+
+### Kontekst
+
+Obecnie informacje o klientach i ich relacjach znajdują się w SQL Serverze. Docelowo chcemy jednak nie tylko wyświetlać istniejące dane, ale budować interaktywną sieć powiązań.
+
+Użytkownik powinien móc m.in.:
+
+* wyświetlić sieć powiązań klienta,
+* rozwijać kolejne poziomy grafu,
+* filtrować rodzaje relacji,
+* dodawać brakujące osoby/podmioty,
+* dodawać nowe relacje,
+* przechowywać elementy, które nie występują w systemie źródłowym,
+* potencjalnie w przyszłości analizować sieć pod kątem KYC/AML.
+
+Istotne jest, że praktycznie każda z analizowanych technologii pozwala zaimplementować podstawowe wymagania. Różnica polega przede wszystkim na stopniu skomplikowania rozwiązania, naturalności wykonywania operacji grafowych oraz możliwościach dalszego rozwoju.
+
+---
+
+## 1. SQL Server + klasyczny model relacyjny / Recursive CTE
+
+### Co daje?
+
+Jest to rozwiązanie wykorzystujące obecną technologię bez wprowadzania nowego silnika bazodanowego.
+
+Relacje pomiędzy podmiotami pozostają przechowywane w klasycznych tabelach, natomiast przechodzenie przez kolejne poziomy powiązań realizowane jest m.in. za pomocą Recursive CTE.
+
+SQL Server pozwala w ten sposób wykonywać rekursywne przechodzenie przez dane i ograniczać maksymalną głębokość wyszukiwania.
+
+### Na jakie pytania biznesowe odpowie?
+
+Bardzo dobrze sprawdzi się dla pytań:
+
+* Z kim bezpośrednio powiązany jest klient X?
+* Jakie podmioty znajdują się 2, 3 lub 4 poziomy od klienta?
+* Jakie relacje posiada dany podmiot?
+* Rozwiń kolejne powiązania po kliknięciu w element grafu.
+* Pokaż tylko relacje określonego typu.
+* Dodaj brakująą osobę lub firmę.
+* Dodaj ręcznie nowe powiązanie.
+
+Możliwe jest również:
+
+* wyszukiwanie ścieżek,
+* szukanie wspólnych powiązań,
+* wykrywanie cykli,
+
+ale wraz ze wzrostem złożoności sieci rośnie skomplikowanie zapytań i kodu.
+
+### Z czym może być problem?
+
+Model relacyjny nie jest zaprojektowany przede wszystkim do analizy sieci.
+
+Dla prostego:
+
+`Klient → Firma → Osoba`
+
+SQL jest bardzo dobrym rozwiązaniem.
+
+Natomiast przy pytaniach typu:
+
+`Znajdź wszystkie możliwe powiązania pomiędzy A i B przez maksymalnie 6 poziomów, ale tylko przez wybrane typy relacji`
+
+zapytania zaczynają wymagać coraz bardziej rozbudowanej logiki rekursywnej.
+
+W praktyce część mechanizmów grafowych implementujemy wtedy samodzielnie za pomocą SQL oraz kodu aplikacyjnego.
+
+### Kiedy wybrać?
+
+Jeżeli głównym wymaganiem pozostanie:
+
+**„pobierz kilka poziomów relacji i narysuj je na frontendzie”**
+
+to klasyczny SQL Server może być całkowicie wystarczający.
+
+Jest to również bardzo dobry **baseline dla POC**, względem którego można porównać bardziej wyspecjalizowane rozwiązania.
+
+---
+
+## 2. SQL Server Graph
+
+SQL Server posiada specjalny model grafowy oparty o `NODE` i `EDGE` oraz mechanizm `MATCH`. Dostępne jest również `SHORTEST_PATH`, służące do wyszukiwania najkrótszych ścieżek i przechodzenia przez relacje o zmiennej długości.
+
+Przykładowo zamiast traktować wszystko wyłącznie jako zestaw klasycznych tabel możemy reprezentować:
+
+`Osoba --PEŁNOMOCNIK--> Firma`
+
+jako Node i Edge.
+
+### Co daje?
+
+Otrzymujemy część możliwości charakterystycznych dla baz grafowych bez rezygnacji z SQL Servera.
+
+Możemy przechowywać:
+
+* osoby jako Node,
+* firmy jako Node,
+* relacje jako Edge,
+
+i wykonywać wyszukiwanie wzorców pomiędzy nimi.
+
+### Na jakie pytania biznesowe odpowie?
+
+Dobrze obsłuży:
+
+* Z kim powiązany jest klient?
+* Pokaż kolejne poziomy sieci.
+* Znajdź osoby powiązane z tą samą firmą.
+* Znajdź wspólny podmiot pomiędzy A i B.
+* Czy istnieje połączenie pomiędzy A i B?
+* Jaka jest najkrótsza ścieżka pomiędzy A i B?
+* Pokaż relacje maksymalnie N poziomów od klienta.
+* Dodaj nowy Node lub Edge.
+
+### Co jest jego mocną stroną?
+
+To bardzo interesujący kompromis:
+
+**model grafowy + istniejąca technologia SQL Server.**
+
+Nie dokładamy zupełnie nowego rodzaju bazy tylko po to, aby otrzymać Node/Edge i podstawowe Traversal (Przechodzenie po grafie).
+
+### Z czym może być problem?
+
+SQL Server Graph nie posiada tak rozbudowanego i elastycznego języka grafowego jak natywne bazy grafowe.
+
+Przykładowo sam `MATCH` posiada ograniczenia dotyczące konstrukcji wzorców; w graph pattern nie są obsługiwane m.in. `OR` i `NOT`.
+
+Przy coraz bardziej zaawansowanych analizach sieciowych możemy więc ponownie dojść do sytuacji, w której część logiki musimy budować dodatkowo w SQL lub aplikacji.
+
+### Kiedy wybrać?
+
+Jeżeli organizacja chce:
+
+**„mieć model grafowy, ale pozostać przy SQL Serverze”**
+
+jest to bardzo mocny kandydat.
+
+Dla naszego POC jest szczególnie interesujący jako rozwiązanie pośrednie pomiędzy zwykłym SQL a Neo4j.
+
+---
+
+## 3. PostgreSQL – klasyczny model relacyjny
+
+PostgreSQL, podobnie jak SQL Server, pozwala wykonywać rekursywne zapytania przez `WITH RECURSIVE`.
+
+Posiada również ciekawe mechanizmy `SEARCH` do organizowania przechodzenia BFS/DFS oraz `CYCLE`, który bezpośrednio pomaga wykrywać cykle w rekursywnym zapytaniu.
+
+### Co daje?
+
+Możemy zrealizować:
+
+* expand node,
+* lazy loading,
+* przechodzenie przez N poziomów,
+* filtrowanie relacji,
+* dodawanie własnych podmiotów,
+* wyszukiwanie powiązań,
+* wykrywanie cykli.
+
+Technicznie jest więc możliwe zbudowanie naszej aplikacji na PostgreSQL.
+
+### Na jakie pytania biznesowe odpowie?
+
+W zasadzie na podobne jak klasyczny SQL Server:
+
+* Co znajduje się N poziomów od klienta?
+* Jakie relacje posiada klient?
+* Czy klient poprzez inne podmioty jest powiązany z firmą X?
+* Czy w sieci występuje cykl?
+* Jakie dwa podmioty posiadają wspólne połączenie?
+
+### Z czym może być problem?
+
+Najważniejsze pytanie brzmi:
+
+**co biznesowo zyskujemy przez migrację SQL Server → PostgreSQL?**
+
+Jeżeli odpowiedzią jest wyłącznie:
+
+**„potrzebujemy grafu”**
+
+to zmiana ta jest słabo uzasadniona.
+
+Nadal wykorzystujemy relacyjny silnik do modelowania problemu, który z czasem może stawać się coraz bardziej grafowy.
+
+Wprowadzamy więc nową technologię, ale nie otrzymujemy fundamentalnie nowego modelu rozwiązania.
+
+### Kiedy wybrać?
+
+PostgreSQL ma sens, jeżeli istnieją inne organizacyjne lub technologiczne powody do jego wykorzystania.
+
+Nie rekomendowałbym natomiast migracji z SQL Servera do zwykłego PostgreSQL wyłącznie z powodu naszego przypadku KYC/AML.
+
+---
+
+## 4. PostgreSQL + Apache AGE
+
+Apache AGE jest rozszerzeniem PostgreSQL dodającym model grafowy i obsługę Cypher.
+
+Pozwala korzystać jednocześnie ze świata relacyjnego i grafowego:
+
+`PostgreSQL + SQL + Graph + Cypher`
+
+Apache AGE jest projektem Apache Software Foundation i działa jako rozszerzenie PostgreSQL, wykorzystując jego transakcyjny mechanizm przechowywania danych.
+
+### Co daje?
+
+Możemy mieć w jednym środowisku:
+
+* klasyczne dane relacyjne,
+* Node,
+* Edge,
+* zapytania SQL,
+* zapytania Cypher,
+* zapytania łączące świat relacyjny z grafowym.
+
+### Na jakie pytania biznesowe odpowie?
+
+Bardzo naturalnie można realizować:
+
+* rozwijanie sieci powiązań,
+* wyszukiwanie ścieżek,
+* analizę wielu poziomów,
+* poszukiwanie wspólnych podmiotów,
+* analizę cykli,
+* filtrowanie relacji podczas przechodzenia przez graf,
+* dodawanie nowych Node i Edge.
+
+Daje więc zdecydowanie więcej możliwości grafowych niż klasyczny PostgreSQL.
+
+### Co jest jego największą zaletą?
+
+Możliwość połączenia:
+
+**relacyjnej bazy PostgreSQL i grafu w jednym silniku.**
+
+Jest to atrakcyjne rozwiązanie szczególnie wtedy, gdy PostgreSQL jest już strategiczną technologią organizacji.
+
+### Z czym może być problem?
+
+Wprowadzamy dodatkowe rozszerzenie, które również musi być:
+
+* instalowane,
+* aktualizowane,
+* testowane,
+* monitorowane,
+* uwzględniane przy zmianach wersji PostgreSQL.
+
+Nie unikamy więc całkowicie dodatkowej technologii – graf jest dostarczany przez rozszerzenie AGE.
+
+### Kiedy wybrać?
+
+Bardzo interesujący kandydat, jeżeli organizacja chce korzystać z PostgreSQL i jednocześnie potrzebuje funkcji grafowych.
+
+W naszym przypadku nie widzę jednak obecnie wystarczającego powodu, aby przechodzić:
+
+`SQL Server → PostgreSQL → AGE`
+
+zamiast bezpośrednio porównać SQL Server z natywną bazą grafową.
+
+---
+
+## 5. Neo4j – natywna baza grafowa
+
+Neo4j jest bazą zaprojektowaną bezpośrednio wokół:
+
+* Node (Węzeł),
+* Relationship/Edge (Relacja/Krawędź),
+* Path (Ścieżka).
+
+Model danych odpowiada więc bezpośrednio temu, co chcemy później prezentować użytkownikowi:
+
+`Osoba --PEŁNOMOCNIK--> Firma --WŁAŚCICIEL--> Firma`
+
+Cypher natywnie obsługuje ścieżki o zmiennej długości, wyszukiwanie osiągalnych węzłów oraz różne warianty najkrótszych ścieżek.
+
+### Co daje?
+
+Podstawowe operacje naszej aplikacji stają się naturalnymi operacjami na grafie:
+
+* dodanie osoby = Node,
+* dodanie firmy = Node,
+* dodanie pełnomocnictwa = Edge,
+* rozwinięcie klienta = Traversal,
+* wyszukiwanie połączenia A–B = Path Finding,
+* wspólny beneficjent = wyszukiwanie wspólnego sąsiada/wzorca,
+* analiza wielu poziomów = variable-length path.
+
+### Na jakie pytania biznesowe odpowie?
+
+Oprócz podstawowej wizualizacji bardzo naturalnie odpowiada na pytania:
+
+* Z kim powiązany jest klient?
+* Jakie podmioty znajdują się N poziomów od niego?
+* Czy A jest w jakikolwiek sposób powiązany z B?
+* Jaka jest najkrótsza droga pomiędzy A i B?
+* Czy firmy A i B posiadają wspólnego beneficjenta?
+* Jakie podmioty łączy ta sama osoba?
+* Czy w sieci występują podejrzane wielopoziomowe struktury?
+* Jak wygląda całe otoczenie wskazanego podmiotu?
+* Jak zmieni się wynik, jeżeli uwzględnimy tylko określone rodzaje relacji?
+
+To są pytania znacznie bliższe przyszłej analizie KYC/AML niż klasycznemu CRUD.
+
+### Co jest jego największą zaletą?
+
+Nie próbujemy odwzorować grafu na model relacyjny.
+
+Graf jest modelem bazowym.
+
+Dlatego im bardziej system ewoluuje z:
+
+**„pokaż relacje klienta”**
+
+do:
+
+**„analizuj sieć powiązań klienta”**
+
+tym bardziej naturalny staje się taki model.
+
+### Z czym może być problem?
+
+Neo4j oznacza wprowadzenie kolejnej technologii:
+
+* nowy silnik bazy,
+* Cypher,
+* nowe procedury utrzymaniowe,
+* synchronizację danych SQL Server → Neo4j,
+* dodatkowy monitoring,
+* backup,
+* nowe kompetencje zespołu,
+* potencjalne koszty licencyjne.
+
+W środowisku produkcyjnym część funkcji istotnych dla systemów enterprise, takich jak clustering, online backup oraz zaawansowane mechanizmy kontroli dostępu, znajduje się w Neo4j Enterprise Edition.
+
+Dlatego wybór Neo4j powinien wynikać z realnej wartości biznesowej analizy grafowej, a nie wyłącznie z faktu, że frontend wyświetla graf.
+
+---
+
+## Podsumowanie
+
+| Rozwiązanie      | Wizualizacja grafu | Expand/Lazy load | Path Finding | Bardziej złożona analiza sieci | Koszt wejścia | Dopasowanie do docelowej platformy KYC/AML |
+| ---------------- | ------------------ | ---------------- | ------------ | ------------------------------ | ------------- | ------------------------------------------ |
+| SQL Server + CTE | bardzo dobre       | bardzo dobre     | możliwe      | coraz trudniejsze              | niski         | średnie                                    |
+| SQL Server Graph | bardzo dobre       | bardzo dobre     | dobre        | dobre                          | niski/średni  | dobre                                      |
+| PostgreSQL       | bardzo dobre       | bardzo dobre     | możliwe      | coraz trudniejsze              | średni        | średnie                                    |
+| PostgreSQL + AGE | bardzo dobre       | bardzo dobre     | bardzo dobre | bardzo dobre                   | średni        | bardzo dobre                               |
+| Neo4j            | bardzo dobre       | bardzo dobre     | bardzo dobre | najlepsze dopasowanie          | średni/wysoki | bardzo dobre                               |
+
+## Rekomendacja dla POC
+
+Na obecnym etapie nie rekomendujemy zmiany SQL Servera na zwykły PostgreSQL, ponieważ nie daje to wystarczającej wartości w kontekście problemu grafowego.
+
+Do POC najbardziej wartościowe są trzy warianty:
+
+**1. SQL Server + Recursive CTE – baseline**
+
+Pokazuje, jak daleko możemy dojść bez wprowadzania nowej technologii.
+
+**2. SQL Server Graph – wariant pośredni**
+
+Pokazuje, czy możliwości grafowe SQL Servera są wystarczające, aby uniknąć wdrażania osobnej bazy grafowej.
+
+**3. Neo4j – wariant docelowo grafowy**
+
+Pokazuje, jakie korzyści otrzymujemy, gdy sieć powiązań jest traktowana jako podstawowy model danych, a nie jako struktura odtwarzana z tabel relacyjnych.
+
+PostgreSQL oraz PostgreSQL + AGE warto pozostawić w analizie jako alternatywy technologiczne, ale na tym etapie nie ma wystarczającego uzasadnienia, aby były głównymi wariantami implementacyjnymi POC.
+
+### Kierunek rekomendowany
+
+Jeżeli docelowym wymaganiem będzie wyłącznie:
+
+**„wyświetl kilka poziomów powiązań klienta i pozwól użytkownikowi je rozwijać”**
+
+najprawdopodobniej wystarczy SQL Server.
+
+Jeżeli jednak rozwiązanie ma ewoluować w kierunku:
+
+**centralnej platformy powiązań KYC/AML, łączącej dane z wielu źródeł, pozwalającej ręcznie uzupełniać sieć i wykonywać analizy ścieżek oraz struktur powiązań,**
+
+najbardziej perspektywicznym kierunkiem jest natywna baza grafowa, np. Neo4j.
+
+Dlatego rekomendowanym podejściem do POC jest **potraktowanie Neo4j jako głównego kandydata**, ale porównanie go z SQL Serverem na dokładnie tych samych scenariuszach biznesowych. Pozwoli to udowodnić, czy korzyść z bazy grafowej rzeczywiście uzasadnia wprowadzenie dodatkowej technologii.

@@ -1,0 +1,461 @@
+Przeanalizowaliśmy cztery główne natywne bazy grafowe pod kątem naszego POC KYC/AML oraz integracji z backendem .NET:
+
+1. Neo4j
+2. Memgraph
+3. TigerGraph
+4. JanusGraph
+
+Celem nie było znalezienie „najlepszej bazy grafowej na rynku”, tylko rozwiązania najlepiej dopasowanego do naszego przypadku: sieci powiązań pomiędzy klientami/podmiotami, interaktywna eksploracja grafu, możliwość dodawania brakujących osób i relacji oraz potencjalny rozwój w kierunku bardziej zaawansowanej analizy KYC/AML.
+
+---
+
+## 1. Neo4j
+
+Neo4j jest najbardziej dojrzałym i kompletnym kandydatem dla naszego POC.
+
+Bazowym modelem są:
+
+* Node – Węzeł,
+* Relationship / Edge – Relacja / Krawędź,
+* Properties – właściwości węzłów i relacji.
+
+Przykładowo:
+
+`(Jan Kowalski)-[:PEŁNOMOCNIK]->(ABC Sp. z o.o.)`
+
+Model ten bardzo dobrze odpowiada temu, co chcemy później prezentować na frontendzie.
+
+### Integracja z .NET
+
+Neo4j posiada oficjalny, utrzymywany przez producenta driver .NET.
+
+Backend może więc bezpośrednio komunikować się z bazą, wykonywać zapytania Cypher i mapować wynik na wspólny model:
+
+`Nodes + Edges`
+
+zwracany następnie do Angulara.
+
+Jest to istotna przewaga względem części konkurencji, ponieważ nie opieramy integracji na community driverach lub wyłącznie REST API.
+
+### Jakie operacje możemy realizować?
+
+Neo4j bardzo dobrze obsługuje:
+
+* pobieranie bezpośrednich relacji,
+* Expand Node,
+* Lazy Loading,
+* przechodzenie przez N poziomów grafu,
+* filtrowanie po typach relacji,
+* wyszukiwanie połączenia A → B,
+* Shortest Path,
+* wyszukiwanie wielu możliwych ścieżek,
+* Common Neighbour,
+* wykrywanie cykli,
+* wyszukiwanie określonych wzorców relacji,
+* dodawanie nowych Node,
+* dodawanie nowych Edge.
+
+Przykładowe pytania biznesowe:
+
+* Z kim powiązany jest klient X?
+* Jak wygląda sieć klienta do czwartego poziomu?
+* Czy klient X jest powiązany z podmiotem Y?
+* Jaka jest najkrótsza ścieżka pomiędzy X i Y?
+* Czy dwie firmy posiadają wspólnego beneficjenta?
+* Czy istnieje cykliczna struktura własności?
+* Które podmioty łączą dwie części sieci?
+
+### Rozwój w kierunku AML/KYC
+
+Neo4j posiada dodatkowo Graph Data Science, czyli zestaw algorytmów umożliwiających bardziej zaawansowaną analizę grafu.
+
+Możliwe są m.in.:
+
+* Connected Components – znajdowanie całych powiązanych grup,
+* Community Detection – wykrywanie klastrów,
+* Centrality – wyszukiwanie najważniejszych podmiotów,
+* PageRank,
+* Betweenness Centrality,
+* Node Similarity,
+* wykrywanie podmiotów będących „mostami” pomiędzy grupami,
+* Link Prediction,
+* bardziej zaawansowane Path Finding.
+
+Przykładowo możemy w przyszłości zapytać:
+
+„Który podmiot jest najbardziej centralnym elementem tej sieci?”
+
+albo:
+
+„Która osoba łączy dwie pozornie niezależne grupy klientów?”
+
+To jest obszar, w którym natywna baza grafowa zaczyna dawać znacznie większą wartość niż zwykła wizualizacja danych.
+
+### Mocne strony
+
+* bardzo dojrzały produkt,
+* oficjalny driver .NET,
+* czytelny Cypher,
+* bardzo dobry Path Finding,
+* bogaty ekosystem,
+* rozbudowane algorytmy grafowe,
+* Enterprise HA / clustering / backup / RBAC,
+* duża liczba materiałów i przykładów,
+* bardzo dobre dopasowanie do KYC/AML.
+
+### Słabe strony
+
+* dodatkowa technologia do utrzymania,
+* konieczność nauczenia zespołu Cyphera,
+* koszt wersji Enterprise,
+* konieczność synchronizacji danych z systemem źródłowym,
+* część bardziej zaawansowanej analityki wymaga Graph Data Science.
+
+### Ocena dla naszego POC
+
+**Najlepszy kandydat.**
+
+Neo4j daje najlepszy balans pomiędzy:
+
+`łatwością implementacji + możliwościami grafowymi + .NET + dojrzałością + potencjałem rozwoju AML/KYC`.
+
+---
+
+## 2. Memgraph
+
+Memgraph jest najbardziej bezpośrednim konkurentem Neo4j w naszym przypadku.
+
+Podobnie jak Neo4j wykorzystuje:
+
+* Property Graph,
+* Node,
+* Edge,
+* Cypher,
+* protokół Bolt.
+
+Oznacza to, że sposób modelowania i wykonywania zapytań jest bardzo podobny.
+
+### Integracja z .NET
+
+Memgraph jest kompatybilny z protokołem Bolt, dlatego aplikacja .NET może korzystać z Neo4j.Driver.
+
+Architektura może wyglądać:
+
+`.NET → Neo4j.Driver → Bolt → Memgraph`
+
+Jest to bardzo duża zaleta, ponieważ nie musimy budować integracji od zera.
+
+Jednocześnie trzeba zaznaczyć, że driver nie jest utrzymywany przez Memgraph specjalnie dla swojej bazy – wykorzystujemy kompatybilność z driverem Neo4j.
+
+### Jakie operacje możemy realizować?
+
+Podobnie jak w Neo4j:
+
+* Expand Node,
+* Lazy Loading,
+* Traversal,
+* Path Finding,
+* Shortest Path,
+* Common Neighbour,
+* Cycle Detection,
+* Pattern Matching,
+* Centrality,
+* Community Detection,
+* PageRank,
+* Similarity.
+
+Memgraph posiada również bibliotekę MAGE z algorytmami grafowymi.
+
+### Największa przewaga
+
+Memgraph jest bardzo mocno nastawiony na **dynamiczne grafy i analizę w czasie rzeczywistym**.
+
+Może być szczególnie interesujący tam, gdzie graf bardzo często się zmienia:
+
+`nowa relacja → aktualizacja grafu → natychmiastowa analiza`
+
+Dlatego dobrze pasuje np. do:
+
+* fraud detection,
+* transaction monitoring,
+* real-time AML.
+
+### Mocne strony
+
+* Cypher,
+* Bolt,
+* dobra integracja z .NET,
+* bardzo dobra wydajność dla dynamicznych grafów,
+* analiza real-time,
+* biblioteka algorytmów MAGE,
+* stosunkowo łatwy POC,
+* podobny model programistyczny do Neo4j.
+
+### Słabe strony
+
+* mniejszy ekosystem niż Neo4j,
+* mniejsza dojrzałość organizacyjna produktu,
+* brak własnego first-party drivera .NET,
+* większe ryzyko technologiczne w długoterminowym projekcie bankowym.
+
+### Ocena dla naszego POC
+
+**Najlepsza alternatywa dla Neo4j.**
+
+Jeżeli chcielibyśmy zrobić benchmark drugiej bazy grafowej, Memgraph byłby pierwszym wyborem.
+
+---
+
+## 3. TigerGraph
+
+TigerGraph jest bardzo mocną platformą grafową, ale skierowaną w większym stopniu w stronę bardzo dużych, rozproszonych grafów i ciężkiej analityki.
+
+### Model
+
+TigerGraph również operuje na:
+
+* Vertex,
+* Edge,
+* Properties.
+
+Posiada własny język:
+
+`GSQL`
+
+który pozwala tworzyć bardzo zaawansowane zapytania i algorytmy.
+
+### Jakie operacje możemy realizować?
+
+TigerGraph bardzo dobrze radzi sobie z:
+
+* BFS/DFS,
+* Path Finding,
+* Shortest Path,
+* All Paths,
+* Centrality,
+* Community Detection,
+* Cycle Detection,
+* PageRank,
+* Similarity,
+* analizą dużych grafów.
+
+Posiada również bibliotekę kilkudziesięciu algorytmów grafowych.
+
+### Największa przewaga
+
+**Skalowanie poziome i analiza ogromnych grafów.**
+
+TigerGraph jest projektowany z myślą o sytuacjach, w których graf musi być rozłożony na wiele maszyn i analizowany równolegle.
+
+Jeżeli mielibyśmy:
+
+* setki milionów lub miliardy Node/Edge,
+* bardzo ciężkie algorytmy,
+* wymaganie skalowania klastra,
+
+TigerGraph byłby bardzo poważnym kandydatem.
+
+### .NET
+
+Tutaj sytuacja jest słabsza niż w Neo4j.
+
+Typowym sposobem integracji jest:
+
+`.NET → REST API → TigerGraph`
+
+Istnieją rozwiązania .NET, ale nie mają takiej dojrzałości i first-party supportu jak Neo4j.Driver.
+
+### Mocne strony
+
+* bardzo duża skalowalność,
+* distributed graph processing,
+* bogata analityka,
+* wiele gotowych algorytmów,
+* HA i clustering,
+* bardzo dobre rozwiązanie dla ekstremalnie dużych grafów.
+
+### Słabe strony
+
+* większy próg wejścia,
+* GSQL zamiast Cyphera,
+* słabsza integracja z .NET,
+* większa złożoność platformy,
+* potencjalnie więcej niż potrzebujemy na obecnym etapie.
+
+### Ocena dla naszego POC
+
+**Technicznie bardzo mocny, ale prawdopodobnie zbyt ciężki dla obecnych potrzeb.**
+
+TigerGraph powinien wrócić do analizy, jeżeli skala grafu lub wymagania dotyczące rozproszonej analityki staną się jednym z głównych problemów systemu.
+
+---
+
+## 4. JanusGraph
+
+JanusGraph ma inne podejście niż Neo4j czy Memgraph.
+
+Nie jest pojedynczym, kompletnym silnikiem przechowującym wszystko samodzielnie.
+
+Może korzystać z zewnętrznego storage, np.:
+
+* Cassandra,
+* HBase,
+* ScyllaDB,
+
+oraz dodatkowego silnika indeksowania:
+
+* Elasticsearch,
+* Solr,
+* Lucene.
+
+Przykładowy stack może więc wyglądać:
+
+`.NET → JanusGraph → Cassandra + Elasticsearch`
+
+### Query Language
+
+JanusGraph wykorzystuje Apache TinkerPop i Gremlin.
+
+Gremlin opisuje przede wszystkim Traversal:
+
+`start w A → idź przez OWNER → idź przez BENEFICIARY → zwróć wynik`
+
+W .NET istnieje Gremlin.NET.
+
+Integracja C# jest więc możliwa i dojrzała.
+
+### Jakie operacje możemy realizować?
+
+* Traversal,
+* BFS/DFS,
+* Path Finding,
+* filtrowanie relacji,
+* przechodzenie przez dowolną głębokość,
+* Pattern Matching,
+* operacje na bardzo dużych grafach.
+
+### Największa przewaga
+
+**Bardzo duża skalowalność oraz elastyczność architektury.**
+
+Można dobrać storage do własnych wymagań i skalować go niezależnie.
+
+### Największa wada
+
+Dokładnie ta sama elastyczność powoduje dużą złożoność.
+
+Możemy skończyć z koniecznością utrzymywania:
+
+* JanusGraph,
+* Cassandra,
+* Elasticsearch,
+* Gremlin Server,
+* monitoringu wszystkich tych elementów.
+
+Jeżeli potrzebujemy dodatkowo dużej analityki OLAP, dochodzą kolejne technologie.
+
+### Mocne strony
+
+* open-source,
+* dobra integracja z Gremlin.NET,
+* bardzo duża skalowalność,
+* elastyczny backend storage,
+* standard Apache TinkerPop.
+
+### Słabe strony
+
+* największa złożoność infrastrukturalna,
+* znacznie bardziej skomplikowane utrzymanie,
+* wiele komponentów,
+* większy próg wejścia,
+* brak wyraźnej przewagi dla naszego obecnego POC.
+
+### Ocena dla naszego POC
+
+**Nie rekomendujemy.**
+
+JanusGraph jest interesujący dla organizacji, która już posiada odpowiednią infrastrukturę lub wymaga ekstremalnego skalowania.
+
+Nie ma obecnie uzasadnienia, aby wprowadzać tak rozbudowany stack specjalnie dla naszego projektu.
+
+---
+
+# Porównanie
+
+| Obszar                      | Neo4j          | Memgraph            | TigerGraph             | JanusGraph        |
+| --------------------------- | -------------- | ------------------- | ---------------------- | ----------------- |
+| Integracja .NET             | bardzo dobra   | bardzo dobra        | średnia                | dobra             |
+| Oficjalny driver .NET       | tak            | kompatybilność Bolt | głównie REST/community | Gremlin.NET       |
+| Język                       | Cypher         | Cypher              | GSQL                   | Gremlin           |
+| Prostota POC                | bardzo wysoka  | bardzo wysoka       | średnia                | niska             |
+| Traversal                   | bardzo dobre   | bardzo dobre        | bardzo dobre           | bardzo dobre      |
+| Path Finding                | bardzo dobre   | bardzo dobre        | bardzo dobre           | bardzo dobre      |
+| Advanced Graph Analytics    | bardzo dobre   | bardzo dobre        | bardzo dobre           | średnie           |
+| Real-time / dynamic graph   | bardzo dobre   | szczególnie mocne   | dobre                  | średnie           |
+| Skalowanie ogromnych grafów | dobre          | dobre               | bardzo dobre           | bardzo dobre      |
+| HA / Enterprise             | bardzo dobre   | dobre               | bardzo dobre           | zależne od stacku |
+| Ekosystem                   | największy     | rozwijający się     | duży                   | duży/open-source  |
+| Operacyjność                | dobra          | dobra               | średnia                | trudna            |
+| Dopasowanie do KYC/AML      | bardzo wysokie | bardzo wysokie      | wysokie                | średnie           |
+| Dopasowanie do naszego POC  | **najlepsze**  | **bardzo dobre**    | średnie                | niskie            |
+
+---
+
+# Rekomendacja
+
+Dla naszego POC rekomendujemy **Neo4j**.
+
+Główne argumenty:
+
+1. bardzo dobre dopasowanie modelu Node/Edge do sieci relacji KYC/AML,
+2. oficjalna i dojrzała integracja z .NET,
+3. prosty i czytelny Cypher,
+4. dobre wsparcie Path Finding i Traversal,
+5. możliwość stopniowego przejścia od prostej wizualizacji do zaawansowanej analizy sieci,
+6. Graph Data Science,
+7. dojrzałe rozwiązania Enterprise,
+8. największy ekosystem spośród analizowanych produktów,
+9. stosunkowo niski koszt technologiczny stworzenia POC.
+
+**Memgraph** traktujemy jako najważniejszą alternatywę, szczególnie jeżeli w przyszłości kluczowa stanie się analiza bardzo dynamicznego grafu w czasie rzeczywistym.
+
+**TigerGraph** jest rozwiązaniem wartym rozważenia przy ekstremalnie dużej skali i wymaganiu intensywnej analityki rozproszonej.
+
+**JanusGraph** daje bardzo dużą elastyczność i skalowalność, ale jego złożoność infrastrukturalna nie jest obecnie uzasadniona dla naszego przypadku.
+
+### Proponowany kierunek
+
+`SQL Server – Source of Truth`
+
+`↓`
+
+`mapowanie / synchronizacja`
+
+`↓`
+
+`Graph Service .NET`
+
+`↓`
+
+`Neo4j`
+
+`↓`
+
+`Graph API`
+
+`↓`
+
+`Angular`
+
+POC powinien zweryfikować przede wszystkim:
+
+* pobranie grafu klienta,
+* Expand Node,
+* Lazy Loading,
+* filtrowanie typów relacji,
+* dodawanie brakujących Node/Edge,
+* Path Finding,
+* Common Neighbour,
+* Cycle Detection.
+
+Na tej podstawie możemy ocenić nie tylko wydajność Neo4j, ale przede wszystkim to, czy natywny model grafowy daje nam wystarczającą przewagę nad rozwiązaniem opartym o klasyczny SQL, aby uzasadnić wprowadzenie nowej technologii.
