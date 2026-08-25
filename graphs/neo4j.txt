@@ -1,0 +1,1599 @@
+# Neo4j – analiza technologii dla platformy relacji KYC/AML
+
+## 1. Czym jest Neo4j?
+
+Neo4j jest natywną bazą grafową.
+
+W klasycznej bazie relacyjnej podstawowymi elementami są:
+
+`Table → Row → Column`
+
+W Neo4j podstawowymi elementami są:
+
+`Node → Relationship → Node`
+
+czyli:
+
+`Węzeł → Relacja → Węzeł`
+
+Przykład biznesowy:
+
+`Jan Kowalski --PEŁNOMOCNIK--> ABC Sp. z o.o.`
+
+W tym przypadku:
+
+* `Jan Kowalski` – Node,
+* `ABC Sp. z o.o.` – Node,
+* `PEŁNOMOCNIK` – Relationship / Edge.
+
+Neo4j wykorzystuje Property Graph Model, co oznacza, że zarówno Node, jak i Relationship mogą posiadać dodatkowe właściwości.
+
+Przykład:
+
+```text
+Person
+----------------
+Id: 123
+Name: Jan Kowalski
+Source: Bank
+```
+
+Relationship:
+
+```text
+PEŁNOMOCNIK
+----------------
+ValidFrom: 2024-01-01
+Source: CoreSystem
+```
+
+Neo4j Community Edition jest pełnoprawną bazą obsługującą m.in. ACID transactions, Cypher i API programistyczne. Enterprise Edition rozszerza ją m.in. o clustering, failover, online backup i bardziej zaawansowane mechanizmy bezpieczeństwa.
+
+---
+
+# 2. Dlaczego model grafowy pasuje do KYC/AML?
+
+W klasycznej bazie SQL możemy posiadać:
+
+`Client`
+
+`Role`
+
+`Relation`
+
+`ReverseRelation`
+
+i za pomocą JOIN oraz Recursive CTE odtwarzać strukturę powiązań.
+
+W Neo4j sama sieć jest modelem danych.
+
+Przykładowo:
+
+```text
+                     Jan
+                      |
+                 PEŁNOMOCNIK
+                      |
+                      v
+Anna --BENEFICJENT--> ABC
+                       |
+                    OWNER
+                       |
+                       v
+                      XYZ
+                       ^
+                       |
+                     PREZES
+                       |
+                     Piotr
+```
+
+Nie pytamy już tylko:
+
+**„Jaki rekord znajduje się w tabeli?”**
+
+Możemy pytać:
+
+**„Jak wygląda sieć wokół tego podmiotu?”**
+
+**„Jak klient A jest powiązany z firmą B?”**
+
+**„Która osoba łączy te dwie firmy?”**
+
+**„Czy w strukturze występuje cykl?”**
+
+**„Który podmiot jest kluczowym elementem całej sieci?”**
+
+To jest fundamentalna różnica pomiędzy modelem relacyjnym i grafowym.
+
+---
+
+# 3. Model danych w Neo4j
+
+Node posiada przede wszystkim Label i Properties.
+
+Przykład:
+
+```text
+(:Person)
+(:Company)
+```
+
+Node może wyglądać:
+
+```text
+(:Person {
+    id: "123",
+    name: "Jan Kowalski",
+    source: "Bank"
+})
+```
+
+Relacja posiada:
+
+* kierunek,
+* typ,
+* opcjonalne properties.
+
+Przykład:
+
+```text
+(:Person)-[:REPRESENTATIVE]->(:Company)
+```
+
+czyli:
+
+`Jan --PEŁNOMOCNIK--> ABC`
+
+Relacja jest kierunkowa biznesowo.
+
+To nie oznacza jednak, że możemy ją odczytać tylko w jednym kierunku.
+
+Możemy zapytać:
+
+**Co wychodzi od ABC?**
+
+```text
+(ABC)-[r]->(x)
+```
+
+**Co dochodzi do ABC?**
+
+```text
+(x)-[r]->(ABC)
+```
+
+albo:
+
+**Jakie wszystkie relacje posiada ABC niezależnie od kierunku?**
+
+```text
+(ABC)-[r]-(x)
+```
+
+Dlatego nie ma potrzeby automatycznego tworzenia dwóch Edge opisujących ten sam fakt.
+
+Przykład:
+
+`A --PEŁNOMOCNIK--> B`
+
+nie wymaga dodatkowego:
+
+`B --MA_PEŁNOMOCNIKA--> A`
+
+Jeden fakt biznesowy może być reprezentowany przez jedną Relationship.
+
+---
+
+# 4. Cypher – język Neo4j
+
+Neo4j wykorzystuje deklaratywny język Cypher.
+
+Jego dużą zaletą jest to, że składnia przypomina strukturę grafu, której szukamy.
+
+Przykład:
+
+```cypher
+MATCH (person:Person)-[:REPRESENTATIVE]->(company:Company)
+RETURN person, company
+```
+
+Można to praktycznie czytać:
+
+**znajdź Person, który przez REPRESENTATIVE jest połączony z Company.**
+
+Path można również opisać:
+
+```text
+(Person)-[:REPRESENTATIVE]->(Company)-[:OWNER]->(Company)
+```
+
+W bardziej skomplikowanych przypadkach jest to często znacznie czytelniejsze niż seria JOIN-ów i rekursji w klasycznym SQL.
+
+---
+
+# 5. Podstawowe operacje, które możemy realizować
+
+## Pobranie bezpośrednich relacji
+
+Pytanie biznesowe:
+
+**„Z kim powiązany jest klient X?”**
+
+Przykład:
+
+```text
+       B
+       |
+A ---> X ---> C
+       |
+       v
+       D
+```
+
+Jest to podstawowa operacja grafowa.
+
+---
+
+# 6. Expand Node
+
+To jeden z najważniejszych przypadków dla naszego frontendu.
+
+Na początku użytkownik widzi:
+
+```text
+A → B
+```
+
+ale w Neo4j istnieje:
+
+```text
+A → B
+B → C
+D → B
+B → E
+```
+
+Użytkownik klika:
+
+`Rozwiń B`
+
+Backend pobiera sąsiadów B i frontend otrzymuje:
+
+```text
+       D
+       |
+       v
+A ---> B ---> C
+       |
+       v
+       E
+```
+
+Frontend nie musi pobierać całego grafu.
+
+Dostaje tylko kolejny fragment.
+
+Dzięki temu możemy zastosować **Lazy Loading grafu**.
+
+---
+
+# 7. Lazy Loading
+
+Graf w Neo4j może zawierać:
+
+`5 000 000 Node`
+
+ale frontend może aktualnie posiadać:
+
+`50 Node`
+
+Użytkownik eksploruje sieć krok po kroku:
+
+```text
+Client
+   |
+   +-- relations
+           |
+           +-- click
+                  |
+                  +-- next relations
+```
+
+Jest to ważne zarówno dla wydajności API, jak i czytelności frontendu.
+
+Nie chcemy próbować narysować całej sieci klienta bez żadnych ograniczeń.
+
+---
+
+# 8. Path Finding – wyszukiwanie ścieżek
+
+Tutaj zaczyna się jedna z największych wartości grafu.
+
+Pytanie:
+
+**„Czy klient A jest w jakikolwiek sposób powiązany z podmiotem X?”**
+
+Możemy otrzymać:
+
+```text
+A
+|
+v
+Firma B
+|
+v
+Jan
+|
+v
+Firma C
+|
+v
+X
+```
+
+Czyli:
+
+`A → Firma B → Jan → Firma C → X`
+
+Graf nie wymaga od nas wcześniejszej wiedzy, przez jakie dokładnie podmioty będzie przebiegała ścieżka.
+
+---
+
+# 9. Shortest Path – najkrótsza ścieżka
+
+Możemy zapytać:
+
+**„Jaka jest najkrótsza droga pomiędzy klientem A i firmą X?”**
+
+Jeżeli mamy:
+
+```text
+A → B → C → D → X
+
+A → Y → X
+```
+
+wynikiem jest:
+
+`A → Y → X`
+
+W kontekście KYC/AML może to odpowiadać pytaniu:
+
+**„Jak blisko badany klient jest powiązany z interesującym nas podmiotem?”**
+
+Neo4j GDS posiada dodatkowo wiele dedykowanych algorytmów Path Finding, m.in. Dijkstra, A*, Yen's Shortest Path, BFS, DFS, Bellman-Ford i All Pairs Shortest Path.
+
+---
+
+# 10. Common Neighbour – wspólny sąsiad
+
+Pytanie biznesowe:
+
+**„Czy firmy A i B mają wspólnych beneficjentów lub pełnomocników?”**
+
+Przykład:
+
+```text
+Firma A ← Jan → Firma B
+```
+
+lub:
+
+```text
+          Jan
+         /   \
+        /     \
+Firma A       Firma B
+        \     /
+         \   /
+          Anna
+```
+
+Możemy odkryć, że pozornie niezależne firmy posiadają wspólne osoby w swoim otoczeniu.
+
+---
+
+# 11. Cycle Detection – wykrywanie cykli
+
+Możemy analizować struktury:
+
+```text
+A → B → C → D
+^           |
+|___________|
+```
+
+czyli:
+
+`A → B → C → D → A`
+
+Tego rodzaju struktury mogą być interesujące np. przy analizowaniu złożonych struktur własnościowych lub kontroli.
+
+Nie oznacza to automatycznie wystąpienia problemu AML.
+
+Jest to natomiast strukturalny sygnał, który może zostać poddany dalszej analizie.
+
+---
+
+# 12. Pattern Matching – wyszukiwanie wzorców
+
+Neo4j pozwala myśleć nie tylko:
+
+**„znajdź konkretnego klienta”**
+
+ale:
+
+**„znajdź wszystkie miejsca w sieci, gdzie występuje taki układ relacji”.**
+
+Przykład wzorca:
+
+```text
+Person
+  |
+OWNER
+  |
+Company
+  |
+OWNER
+  |
+Company
+  ^
+  |
+REPRESENTATIVE
+  |
+Person
+```
+
+Możemy następnie szukać wszystkich fragmentów grafu pasujących do takiej struktury.
+
+To jest szczególnie interesujące, jeżeli w przyszłości biznes zdefiniuje określone wzorce relacji, których chce szukać w całej sieci.
+
+---
+
+# 13. Integracja z .NET
+
+Neo4j posiada oficjalny driver:
+
+`Neo4j.Driver`
+
+Instalacja:
+
+```text
+dotnet add package Neo4j.Driver
+```
+
+Aktualny driver wspiera .NET 8, 9 i 10.
+
+Backend .NET może korzystać bezpośrednio z Cyphera.
+
+Architektura:
+
+```text
+Angular
+   |
+   | HTTP
+   v
+.NET Graph API
+   |
+   | Neo4j.Driver / Bolt
+   v
+Neo4j
+```
+
+Frontend nie powinien znać szczegółów Neo4j.
+
+Backend może zwracać neutralny model:
+
+```json
+{
+  "nodes": [],
+  "edges": []
+}
+```
+
+Dzięki temu:
+
+`Angular`
+
+nie jest związany z:
+
+`Neo4j`
+
+i w przyszłości warstwa storage może być zmieniona bez przebudowy kontraktu frontendowego.
+
+---
+
+# 14. Proponowana architektura naszej platformy
+
+Obecny SQL Server pozostaje systemem źródłowym.
+
+Neo4j nie musi zastępować SQL Servera.
+
+Proponowany model:
+
+```text
+                 SQL Server
+             System źródłowy
+                    |
+                    |
+              synchronizacja
+                    |
+                    v
+              Graph Service
+                    |
+                    v
+                 Neo4j
+                    |
+                    v
+              .NET Graph API
+                    |
+                    v
+                 Angular
+                    |
+                    v
+              Cytoscape.js
+```
+
+Dodatkowe Node, których nie ma w systemie bankowym, mogą istnieć bezpośrednio w domenie Graph Service / Graph Database:
+
+```text
+Bank Data
++
+User Provided Data
+```
+
+Przykład:
+
+```text
+Jan [Bank]
+ |
+ v
+ABC [Bank]
+ |
+ v
+Piotr [UserProvided]
+```
+
+---
+
+# 15. Dlaczego osobna baza grafowa?
+
+Jednym z istotnych założeń architektonicznych jest izolacja platformy grafowej od systemu źródłowego.
+
+Nie chcemy wykonywać coraz bardziej zaawansowanych:
+
+* Recursive CTE,
+* Path Finding,
+* analiz wielu poziomów,
+* analiz całych sieci,
+
+bezpośrednio na współdzielonej bazie SQL wykorzystywanej przez inne systemy.
+
+Osobny Graph Store pozwala oddzielić:
+
+**operacyjny model źródłowy**
+
+od:
+
+**modelu eksploracji i analizy powiązań.**
+
+---
+
+# 16. Neo4j Graph Data Science – GDS
+
+Graph Data Science jest kolejną warstwą możliwości Neo4j.
+
+Najprostsze rozróżnienie:
+
+**Neo4j Graph Database**
+
+przechowuje i odpytuje graf.
+
+**Neo4j Graph Data Science**
+
+analizuje strukturę grafu.
+
+GDS zawiera algorytmy z kategorii:
+
+* Path Finding,
+* Centrality,
+* Community Detection,
+* Similarity,
+* Topological Link Prediction,
+* Node Embeddings,
+* DAG Algorithms,
+* Pregel API.
+
+---
+
+# 17. Jak GDS działa?
+
+GDS nie wykonuje większości algorytmów bezpośrednio na podstawowym storage Neo4j.
+
+Najpierw tworzona jest zoptymalizowana reprezentacja grafu **in-memory**.
+
+Proces:
+
+```text
+Neo4j Database
+      |
+      |
+      v
+Graph Projection
+      |
+      v
+GDS Graph Catalog
+      |
+      | IN MEMORY
+      v
+Graph Algorithm
+      |
+      v
+Result
+```
+
+Możemy zdecydować, które:
+
+* Node Labels,
+* Relationship Types,
+* properties
+
+mają znaleźć się w projekcji.
+
+Dzięki temu nie musimy analizować całej bazy.
+
+Możemy stworzyć np.:
+
+`kycGraph`
+
+zawierający wyłącznie:
+
+`Person`
+
+`Company`
+
+oraz:
+
+`OWNER`
+
+`BENEFICIAL_OWNER`
+
+`REPRESENTATIVE`
+
+GDS wykorzystuje specjalną reprezentację grafu w pamięci właśnie po to, aby efektywnie wykonywać algorytmy grafowe.
+
+---
+
+# 18. Czy GDS trzeba instalować?
+
+Tak.
+
+W przypadku self-managed Neo4j Graph Data Science jest instalowany jako plugin do Neo4j.
+
+W przypadku:
+
+**Neo4j Desktop**
+
+można zainstalować go poprzez UI.
+
+W przypadku:
+
+**Neo4j Server**
+
+plugin należy skonfigurować po stronie serwera.
+
+W przypadku:
+
+**Docker**
+
+GDS można włączyć jako plugin Neo4j, np. poprzez konfigurację `NEO4J_PLUGINS=["graph-data-science"]`.
+
+Neo4j udostępnia również rozwiązania zarządzane, w których instalacja GDS nie jest wymagana po stronie użytkownika.
+
+Po instalacji można sprawdzić wersję:
+
+```cypher
+RETURN gds.version();
+```
+
+---
+
+# 19. Czy Graph Data Science jest płatne?
+
+Istnieją:
+
+**GDS Community Edition**
+
+oraz:
+
+**GDS Enterprise Edition.**
+
+Community Edition zawiera wszystkie algorytmy.
+
+Ma jednak m.in.:
+
+* maksymalną concurrency równą 4 CPU cores,
+* limit trzech modeli w Model Catalog,
+* ograniczoną część funkcji zarządzania Graph Catalog i Model Catalog.
+
+Enterprise Edition:
+
+* usuwa limit 4 CPU,
+* daje dodatkowe możliwości Graph Catalog,
+* backup/restore grafów GDS,
+* Apache Arrow import/export,
+* dodatkowe mechanizmy monitorowania,
+* rozszerzony Model Catalog,
+* możliwość utrwalania modeli.
+
+Enterprise wymaga oddzielnej licencji GDS.
+
+### Dla POC
+
+GDS Community Edition jest w pełni wystarczające.
+
+Posiada wszystkie algorytmy, które chcielibyśmy przetestować.
+
+---
+
+# 20. Centrality – które podmioty są najważniejsze?
+
+Wyobraźmy sobie:
+
+```text
+        A
+        |
+        v
+        X
+      / | \
+     B  C  D
+        |
+        E
+```
+
+Node `X` wygląda na bardzo ważny element struktury.
+
+Przy grafie zawierającym miliony Node człowiek nie jest jednak w stanie tego zauważyć.
+
+Algorytmy **Centrality** pozwalają matematycznie ocenić znaczenie Node w sieci.
+
+GDS posiada m.in.:
+
+* Degree Centrality,
+* Betweenness Centrality,
+* Closeness Centrality,
+* PageRank,
+* HITS,
+* Eigenvector Centrality,
+* Articulation Points,
+* Bridges.
+
+---
+
+# 21. Degree Centrality
+
+Najprostszy przypadek.
+
+Pytanie:
+
+**„Który podmiot posiada najwięcej relacji?”**
+
+Jeżeli:
+
+```text
+A ─┐
+B ─┤
+C ─┼─> X
+D ─┤
+E ─┘
+```
+
+X posiada bardzo wysoki Degree.
+
+Może to być np.:
+
+* pełnomocnik wielu firm,
+* osoba kontrolująca wiele podmiotów,
+* podmiot występujący w wielu strukturach.
+
+---
+
+# 22. Betweenness Centrality
+
+Znacznie ciekawszy przypadek KYC/AML.
+
+Mamy:
+
+```text
+Grupa A
+
+A -- B -- C
+          |
+          X
+          |
+D -- E -- F
+
+Grupa B
+```
+
+X może posiadać tylko kilka bezpośrednich relacji.
+
+Jednocześnie bardzo duża liczba ścieżek pomiędzy grupą A i B przebiega właśnie przez X.
+
+Pytanie biznesowe:
+
+**„Który podmiot jest kluczowym łącznikiem pomiędzy różnymi częściami sieci?”**
+
+Tego nie zobaczymy za pomocą prostego:
+
+`COUNT(Relations)`
+
+Node może mieć mało relacji, ale jednocześnie odgrywać bardzo istotną rolę strukturalną.
+
+---
+
+# 23. Bridges – Mosty
+
+Mamy:
+
+```text
+A -- B -- C ---- X ---- D -- E -- F
+```
+
+Jeżeli relacja:
+
+`C -- X`
+
+jest jedynym połączeniem pomiędzy dwiema częściami grafu, jest **Bridge – Mostem**.
+
+Pytanie biznesowe:
+
+**„Która pojedyncza relacja łączy dwie pozornie niezależne grupy?”**
+
+Może to pomóc znaleźć połączenie, które nie wygląda szczególnie interesująco podczas zwykłego przeglądania danych, ale ma fundamentalne znaczenie dla struktury sieci.
+
+---
+
+# 24. Articulation Point
+
+Podobnie możemy znaleźć Node:
+
+```text
+A -- B -- C -- X -- D -- E -- F
+```
+
+po którego usunięciu:
+
+```text
+A -- B -- C
+
+D -- E -- F
+```
+
+graf rozpada się na dwie części.
+
+Pytanie biznesowe:
+
+**„Która osoba lub firma spina ze sobą dwie grupy podmiotów?”**
+
+To może być bardzo wartościowa informacja podczas analizy sieci powiązań.
+
+---
+
+# 25. Connected Components
+
+Graf:
+
+```text
+A -- B -- C -- D
+
+X -- Y -- Z
+
+K -- L
+```
+
+posiada trzy niezależne grupy.
+
+Weakly Connected Components może przypisać każdemu Node identyfikator komponentu.
+
+Pytanie biznesowe:
+
+**„Do jakiej całej sieci powiązań należy klient X?”**
+
+Zamiast analizować tylko:
+
+`X → bezpośredni sąsiad`
+
+możemy zobaczyć:
+
+**całą połączoną strukturę, której częścią jest klient.**
+
+Connected Components należą do kategorii Community Detection dostępnej w GDS.
+
+---
+
+# 26. Community Detection
+
+Connected Components odpowiadają:
+
+**„Czy Node są w ogóle połączone?”**
+
+Community Detection idzie krok dalej:
+
+**„Które Node tworzą szczególnie mocno powiązane grupy?”**
+
+Przykład:
+
+```text
+A---B                 X---Y
+|\ /|                 |\ /|
+| C |------ P --------| Z |
+|/ \|                 |/ \|
+D---E                 W---Q
+```
+
+Algorytm może zauważyć:
+
+```text
+Community 1:
+A B C D E
+
+Community 2:
+X Y Z W Q
+```
+
+pomimo że obie grupy są ze sobą połączone przez P.
+
+Neo4j GDS posiada m.in.:
+
+* Louvain,
+* Leiden,
+* Label Propagation,
+* K-Core,
+* K-Means,
+* Strongly Connected Components,
+* Weakly Connected Components,
+* Triangle Count.
+
+Pytanie biznesowe:
+
+**„Czy możemy automatycznie identyfikować naturalne grupy podmiotów wewnątrz dużej sieci KYC?”**
+
+---
+
+# 27. Node Similarity
+
+Wyobraźmy sobie:
+
+```text
+Firma A
+ |
+ +-- Jan
+ +-- Anna
+ +-- Piotr
+ +-- XYZ
+```
+
+oraz:
+
+```text
+Firma B
+ |
+ +-- Jan
+ +-- Anna
+ +-- Piotr
+ +-- DEF
+```
+
+Firmy A i B mają bardzo podobne otoczenie.
+
+Nie muszą być bezpośrednio połączone.
+
+GDS może policzyć ich podobieństwo.
+
+Pytanie biznesowe:
+
+**„Które podmioty posiadają bardzo podobną strukturę powiązań?”**
+
+Neo4j GDS udostępnia Node Similarity oraz K-Nearest Neighbors; dostępne są także funkcje podobieństwa takie jak Jaccard, Overlap czy Cosine.
+
+---
+
+# 28. Link Prediction
+
+To bardziej zaawansowany i przyszłościowy przypadek.
+
+Mamy strukturę:
+
+```text
+A ---- X
+ \    /
+   Y
+ /    \
+B ---- Z
+```
+
+ale nie mamy:
+
+```text
+A ---- B
+```
+
+Analiza struktury może wskazać:
+
+**„A i B mają na tyle podobne otoczenie, że warto sprawdzić, czy nie istnieje pomiędzy nimi brakująca relacja.”**
+
+Ważne:
+
+Link Prediction nie oznacza:
+
+**„relacja na pewno istnieje”.**
+
+Jest to:
+
+**sygnał do dalszej analizy.**
+
+W kontekście KYC/AML wynik takiego algorytmu powinien być traktowany jako element wspomagający analityka, a nie dowód biznesowy.
+
+---
+
+# 29. Graph Machine Learning
+
+GDS idzie jeszcze krok dalej.
+
+Możliwe są:
+
+* Node Classification,
+* Link Prediction,
+* Node Regression,
+* Node Embeddings.
+
+Pozwala to potencjalnie budować modele wykorzystujące nie tylko properties klienta, ale również jego **pozycję i otoczenie w grafie**.
+
+Klasyczny model może wiedzieć:
+
+```text
+wiek
+kraj
+typ klienta
+produkt
+```
+
+Model grafowy może dodatkowo uwzględnić:
+
+```text
+z kim klient jest połączony
+
+jak silne jest jego otoczenie
+
+w jakiej community występuje
+
+jak centralną pozycję zajmuje
+
+jak podobna jest jego sieć do innych klientów
+```
+
+Jest to już jednak etap znacznie późniejszy niż obecny POC.
+
+---
+
+# 30. Jak GDS może być wykorzystywane przez aplikację?
+
+Nie rekomendujemy używania GDS do każdej operacji.
+
+Architektonicznie:
+
+```text
+                  .NET Graph Service
+                        |
+             ┌──────────┴───────────┐
+             |                      |
+             v                      v
+       zwykły Cypher               GDS
+             |                      |
+             v                      v
+        OPERACJE                ANALITYKA
+```
+
+### Zwykły Cypher
+
+powinien obsługiwać:
+
+* GetGraph,
+* ExpandNode,
+* Lazy Loading,
+* AddNode,
+* AddRelationship,
+* Delete,
+* filtrowanie,
+* podstawowe Path Finding.
+
+### GDS
+
+powinien obsługiwać:
+
+* Centrality,
+* Connected Components,
+* Community Detection,
+* Similarity,
+* zaawansowany Path Finding,
+* Bridges,
+* Articulation Points,
+* Link Prediction,
+* ML.
+
+Nie warto używać ciężkiego silnika analitycznego do zwykłego:
+
+**„pokaż mi sąsiadów klienta”.**
+
+---
+
+# 31. Jak wygląda wykonanie GDS?
+
+Typowy proces:
+
+```text
+1. Dane znajdują się w Neo4j
+
+            ↓
+
+2. Tworzymy Graph Projection
+
+            ↓
+
+3. Graf trafia do Graph Catalog in-memory
+
+            ↓
+
+4. Uruchamiamy algorytm
+
+            ↓
+
+5. Otrzymujemy wynik
+```
+
+Wynik może zostać:
+
+### STREAM
+
+zwrócony bezpośrednio do aplikacji.
+
+Dobre dla POC:
+
+```text
+Company A = score 8.5
+Company B = score 5.3
+Company C = score 2.1
+```
+
+### WRITE
+
+zapisany jako property do Neo4j.
+
+Np.:
+
+```text
+Company
+pageRank = 8.5
+```
+
+### MUTATE
+
+zapisany tylko do aktualnego grafu GDS w pamięci.
+
+Możemy wtedy uruchomić kolejne algorytmy wykorzystujące wcześniejszy wynik.
+
+GDS udostępnia typowe tryby `stream`, `stats`, `mutate` i `write`, dzięki czemu analizę można wykonywać bez modyfikowania danych lub świadomie utrwalać jej wyniki.
+
+---
+
+# 32. Ważne ograniczenie GDS – pamięć
+
+Graph Projection jest przechowywany w pamięci.
+
+Jeżeli baza posiada:
+
+`5 mln Node`
+
+i bardzo dużą liczbę Edge, nie oznacza to automatycznie, że powinniśmy załadować wszystko.
+
+Możemy stworzyć projekcję:
+
+```text
+tylko aktywni klienci
++
+wybrane typy relacji
++
+wybrane properties
+```
+
+GDS posiada również mechanizmy estymacji pamięci przed uruchomieniem projekcji lub algorytmu.
+
+Jest to istotne przy projektowaniu środowiska produkcyjnego.
+
+---
+
+# 33. Aktualność Graph Projection
+
+Graf GDS w pamięci należy traktować oddzielnie od podstawowej bazy.
+
+Jeżeli użytkownik doda:
+
+```text
+Piotr --OWNER--> ABC
+```
+
+do Neo4j, nie należy zakładać, że istniejąca wcześniej projekcja analityczna automatycznie odzwierciedla tę zmianę.
+
+Dlatego można stosować model:
+
+```text
+Neo4j operational graph
+ciągle się zmienia
+
+        ↓
+
+utworzenie/odświeżenie projekcji
+
+        ↓
+
+GDS analytics
+```
+
+To kolejny powód, żeby GDS pozostawić jako warstwę analityczną zamiast używać go do podstawowej eksploracji grafu.
+
+---
+
+# 34. Community vs Enterprise – Neo4j Database
+
+Na poziomie samej bazy istnieją:
+
+## Community Edition
+
+Darmowa wersja odpowiednia m.in. do:
+
+* nauki,
+* POC,
+* developmentu,
+* pojedynczego serwera.
+
+Obsługuje:
+
+* native graph processing/storage,
+* ACID,
+* Cypher,
+* API,
+* indeksy,
+* podstawowe mechanizmy bazy.
+
+Neo4j podaje Community Edition jako GPL3-licensed i darmową.
+
+## Enterprise Edition
+
+Przeznaczona dla produkcyjnych zastosowań wymagających m.in.:
+
+* High Availability,
+* clustering,
+* failover,
+* read scaling,
+* zaawansowanego security,
+* fine-grained access control,
+* online backup.
+
+Cena self-managed Enterprise jest ustalana komercyjnie z Neo4j.
+
+---
+
+# 35. High Availability
+
+W Enterprise można utworzyć cluster.
+
+Neo4j rozróżnia m.in.:
+
+* Primary,
+* Secondary.
+
+Primary odpowiada za transakcje i uczestniczy w zapewnianiu fault tolerance.
+
+Secondary może służyć m.in. do skalowania odczytów.
+
+Cluster zapewnia:
+
+* scalability,
+* fault tolerance,
+* routing,
+* load balancing.
+
+Neo4j wykorzystuje mechanizm konsensusu Raft do synchronizacji podstawowych instancji i wyboru lidera odpowiedzialnego za porządkowanie zapisów.
+
+---
+
+# 36. Backup
+
+Community umożliwia m.in. offline dump/load.
+
+Enterprise posiada dodatkowo online backup działającej bazy, backupy pełne/różnicowe oraz rozszerzone mechanizmy restore.
+
+Dla systemu bankowego byłby to jeden z elementów wymagających analizy przed przejściem z POC do produkcji.
+
+---
+
+# 37. Security
+
+W środowisku bankowym interesujące są przede wszystkim możliwości Enterprise związane z:
+
+* RBAC,
+* fine-grained privileges,
+* LDAP / Active Directory,
+* szyfrowaniem,
+* kontrolą dostępu do elementów grafu.
+
+Neo4j Enterprise wspiera Role Based Access Control pozwalający określać, jakie operacje oraz elementy grafu są dostępne dla poszczególnych ról.
+
+---
+
+# 38. Co Neo4j daje nam dzisiaj?
+
+Dla pierwszej wersji systemu:
+
+```text
+Node
+Edge
+Expand
+Lazy Loading
+Path Finding
+Add Node
+Add Relationship
+```
+
+czyli możliwość zbudowania interaktywnego grafu KYC.
+
+---
+
+# 39. Co może dać nam jutro?
+
+Bez zmiany podstawowego modelu danych możemy później dołożyć:
+
+```text
+Shortest Path
+
+Common Neighbour
+
+Cycle Detection
+
+Connected Components
+
+Centrality
+
+Community Detection
+
+Node Similarity
+
+Bridges
+
+Articulation Points
+
+Link Prediction
+
+Graph Machine Learning
+```
+
+I to jest jeden z najmocniejszych argumentów za zastosowaniem natywnej bazy grafowej.
+
+Nie wybieramy technologii wyłącznie dlatego, że:
+
+**„chcemy narysować graf”.**
+
+Do tego wystarczyłby SQL + biblioteka frontendowa.
+
+Wybieramy ją dlatego, że obecny przypadek:
+
+**„pokaż powiązania klienta”**
+
+może ewoluować do:
+
+**„analizuj sieć powiązań klienta”.**
+
+---
+
+# 40. Ograniczenia / koszty Neo4j
+
+Neo4j nie jest rozwiązaniem bez kosztów architektonicznych.
+
+Wprowadzenie go oznacza:
+
+* dodatkowy silnik bazy danych,
+* synchronizację SQL → Neo4j,
+* konieczność poznania Cyphera,
+* dodatkowy monitoring,
+* dodatkowy backup,
+* nowe kompetencje administracyjne,
+* dodatkowe wymagania dotyczące HA/DR,
+* potencjalny koszt Enterprise,
+* potencjalny koszt GDS Enterprise.
+
+Dlatego nie powinien zostać wybrany wyłącznie ze względu na atrakcyjną wizualizację grafu.
+
+---
+
+# 41. Co daje SQL, a co Neo4j?
+
+### SQL
+
+Bardzo dobrze odpowiada na:
+
+**„Jakie dane posiada klient?”**
+
+**„Jakie rekordy spełniają określone kryteria?”**
+
+**„Jakie bezpośrednie relacje posiada klient?”**
+
+**„Pokaż kilka znanych poziomów danych.”**
+
+### Neo4j
+
+Naturalnie odpowiada dodatkowo na:
+
+**„Jak te dane są ze sobą połączone?”**
+
+**„Czy A jest połączone z B?”**
+
+**„Jak wygląda ścieżka A → B?”**
+
+**„Kto łączy A i B?”**
+
+**„Które grupy tworzą sieć?”**
+
+**„Który podmiot jest centralny?”**
+
+**„Która relacja spina dwie grupy?”**
+
+**„Które podmioty mają podobne otoczenie?”**
+
+**„Jakich relacji może brakować?”**
+
+To właśnie różnica pomiędzy:
+
+**analizą rekordów**
+
+i:
+
+**analizą topologii sieci.**
+
+---
+
+
+---
+
+# 43. Proponowany POC Graph Data Science
+
+Po działającej podstawowej aplikacji warto wykonać niewielki drugi etap.
+
+Nie trzeba implementować kilkudziesięciu algorytmów.
+
+Wystarczy wybrać trzy.
+
+## 1. Weakly Connected Components
+
+Pytanie:
+
+**„Do jakiej całej sieci należy klient?”**
+
+Pokazuje możliwość automatycznego budowania grup powiązanych podmiotów.
+
+## 2. Betweenness Centrality
+
+Pytanie:
+
+**„Który podmiot jest kluczowym łącznikiem pomiędzy pozostałymi uczestnikami sieci?”**
+
+Pokazuje, że graf pozwala znaleźć znaczenie podmiotu, którego nie da się sprowadzić do liczby bezpośrednich relacji.
+
+## 3. Node Similarity
+
+Pytanie:
+
+**„Które firmy/osoby posiadają bardzo podobne otoczenie relacyjne?”**
+
+Pokazuje możliwość odkrywania podobieństw, które nie są zapisane bezpośrednio w żadnej tabeli.
+
+---
+
+# 44. Najważniejszy argument biznesowy za GDS
+
+Największą wartością nie jest możliwość policzenia PageRank.
+
+Najważniejsze jest to, że możemy otrzymać **nową informację wynikającą z samej struktury sieci**.
+
+W źródłowym SQL możemy mieć:
+
+```text
+Client
+Relation
+RelationType
+```
+
+Nigdzie jednak nie zapisano:
+
+```text
+Client X jest najważniejszym łącznikiem dwóch grup.
+```
+
+Ani:
+
+```text
+Company A i Company B mają bardzo podobną strukturę otoczenia.
+```
+
+Ani:
+
+```text
+Person X spina dwie pozornie niezależne sieci.
+```
+
+Te informacje **powstają dopiero w wyniku analizy grafu**.
+
+I to jest największa potencjalna wartość Graph Data Science dla KYC/AML.
+
+---
+
+# 45. Rekomendacja
+
+Neo4j powinno być rozpatrywane nie jako zamiennik SQL Servera, ale jako **wyspecjalizowany Graph Store i silnik analizy sieci powiązań**.
+
+Proponowana odpowiedzialność:
+
+```text
+SQL Server
+    =
+Source of Truth dla danych bankowych
+
+Neo4j
+    =
+Graph Model + Exploration
+
+GDS
+    =
+Graph Analytics
+```
+
+Architektura:
+
+```text
+                    SYSTEMY BANKOWE
+                          |
+                          v
+                     SQL Server
+                          |
+                          |
+               Mapping / Synchronizacja
+                          |
+                          v
+                       Neo4j
+                    /         \
+                   /           \
+             Cypher             GDS
+               |                 |
+               |                 |
+          Exploration         Analytics
+               \                 /
+                \               /
+                 .NET Graph API
+                       |
+                       v
+                    Angular
+                       |
+                       v
+                  Cytoscape.js
+```
+
+Taki model pozwala rozpocząć bardzo małym POC:
+
+**„pokaż i rozwijaj relacje klienta”**
+
+bez zamykania drogi do:
+
+**„centralnej platformy eksploracji i analizy sieci KYC/AML”.**
+
+To właśnie możliwość stopniowego przejścia od prostych relacji do pełnej analizy topologii sieci jest obecnie jednym z najmocniejszych argumentów za sprawdzeniem Neo4j w POC.
