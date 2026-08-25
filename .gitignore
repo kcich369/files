@@ -1,0 +1,10 @@
+# Obsidian local configuration
+.obsidian/
+
+# Local AI working state
+.ai/
+
+# Common local/system files
+.trash/
+.DS_Store
+Thumbs.db
