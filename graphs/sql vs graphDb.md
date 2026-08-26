@@ -1,0 +1,838 @@
+# SQL Server a Neo4j – porównanie technologii dla platformy relacji KYC/AML
+
+Przeanalizowaliśmy trzy możliwe poziomy realizacji grafu relacji KYC/AML w kontekście SQL Servera i natywnej bazy grafowej:
+
+1. klasyczny SQL Server + Recursive CTE,
+2. SQL Server Graph – `NODE`, `EDGE`, `MATCH`, `SHORTEST_PATH`,
+3. Neo4j + Cypher + opcjonalnie Graph Data Science.
+
+Najważniejszy wniosek jest taki, że nie powinniśmy porównywać Neo4j wyłącznie ze zwykłym SQL-em i Recursive CTE.
+
+SQL Server posiada własne mechanizmy grafowe i potrafi obsłużyć znacznie więcej scenariuszy niż klasyczny model relacyjny.
+
+Kluczowe pytanie brzmi więc:
+
+**do którego momentu możliwości SQL Server Graph są wystarczające, a od którego momentu zaczynamy potrzebować pełnoprawnej platformy grafowej?**
+
+---
+
+## 1. Klasyczny SQL Server + Recursive CTE
+
+W najprostszym wariancie zachowujemy klasyczny model relacyjny i przechodzimy przez kolejne poziomy relacji za pomocą Recursive CTE.
+
+Przykład:
+
+`A → B → C → D`
+
+Recursive CTE pozwala rozpocząć od A i iteracyjnie pobierać kolejne relacje.
+
+### Jakie wymagania biznesowe obsłuży bardzo dobrze?
+
+#### Bezpośrednie relacje
+
+Pytanie:
+
+**„Z kim powiązany jest klient X?”**
+
+Przykład:
+
+`X → A`
+
+`X → B`
+
+`X → C`
+
+To bardzo prosty przypadek dla SQL.
+
+---
+
+#### Kilka poziomów grafu
+
+Pytanie:
+
+**„Pokaż sieć klienta do 3 lub 4 poziomu.”**
+
+Przykład:
+
+`X → A → B → C`
+
+Recursive CTE bardzo dobrze nadaje się do takiego przypadku, szczególnie jeżeli głębokość jest ograniczona.
+
+---
+
+#### Expand Node
+
+Użytkownik widzi:
+
+`A → B`
+
+klika B i chce zobaczyć:
+
+`B → C`
+
+`B → D`
+
+`E → B`
+
+To nadal prosty przypadek.
+
+---
+
+#### Lazy Loading
+
+Nie pobieramy całego grafu.
+
+Frontend pobiera:
+
+`A → B`
+
+potem po kliknięciu B:
+
+`B → C`
+
+i kolejne elementy są dokładane do aktualnego grafu.
+
+SQL spokojnie to obsłuży.
+
+---
+
+#### Filtrowanie relacji
+
+Pytanie:
+
+**„Pokaż tylko relacje typu PEŁNOMOCNIK i BENEFICJENT.”**
+
+Możemy zastosować klasyczne:
+
+`WHERE RelationType IN (...)`
+
+To jeden z najmocniejszych przypadków SQL.
+
+---
+
+### Kiedy CTE zaczyna być problemem?
+
+Sytuacja zmienia się, gdy przestajemy tylko pobierać kolejne poziomy, a zaczynamy zadawać pytania o strukturę grafu.
+
+Przykład:
+
+**„Czy klient A jest w jakikolwiek sposób powiązany z klientem X?”**
+
+Jeszcze możemy użyć CTE.
+
+Następnie:
+
+**„Znajdź ścieżkę A → X maksymalnie przez 7 relacji.”**
+
+Nadal możliwe.
+
+Potem:
+
+**„Tylko przez określone typy relacji.”**
+
+Nadal możliwe.
+
+Potem:
+
+**„Nie odwiedzaj tego samego podmiotu ponownie.”**
+
+Musimy zacząć pilnować odwiedzonych Node.
+
+Potem:
+
+**„Znajdź najkrótszą ścieżkę.”**
+
+Potem:
+
+**„Znajdź kilka alternatywnych ścieżek.”**
+
+Potem:
+
+**„Relacje mają różne wagi – znajdź najtańszą/najmniej ryzykowną ścieżkę.”**
+
+W tym momencie coraz większą część logiki Traversal i Path Finding zaczynamy implementować samodzielnie.
+
+Dlatego Recursive CTE jest dobrym rozwiązaniem dla:
+
+**Graph Visualization / prostego Graph Exploration**
+
+ale zaczyna być niewygodne przy bardziej zaawansowanej analizie sieci.
+
+---
+
+## 2. SQL Server Graph
+
+SQL Server posiada specjalny model grafowy dostępny od SQL Server 2017.
+
+Możemy tworzyć:
+
+`NODE`
+
+oraz:
+
+`EDGE`
+
+czyli modelować bezpośrednio:
+
+`Person --PEŁNOMOCNIK--> Company`
+
+SQL Server posiada również `MATCH`, który pozwala wyszukiwać wzorce Node–Edge–Node, oraz `SHORTEST_PATH`, dostępne od SQL Server 2019, umożliwiające przechodzenie po ścieżkach o zmiennej długości.
+
+To jest znacznie więcej niż klasyczny Recursive CTE.
+
+---
+
+### Co SQL Server Graph robi bardzo dobrze?
+
+#### 1. Bezpośrednie relacje
+
+Pytanie:
+
+**„Z kim powiązany jest klient X?”**
+
+Naturalny przypadek:
+
+`X --RELATION--> Y`
+
+---
+
+#### 2. Expand Node
+
+Pytanie:
+
+**„Jakie wszystkie relacje posiada B?”**
+
+Możemy pobrać relacje przychodzące i wychodzące.
+
+Przykład:
+
+```text
+        D
+        |
+        v
+A ----> B ----> C
+        |
+        v
+        E
+```
+
+SQL Graph bardzo dobrze nadaje się do takiej eksploracji.
+
+---
+
+#### 3. Lazy Loading
+
+Tak samo jak przy zwykłym SQL.
+
+Frontend może pobierać tylko fragment sieci i rozwijać kolejne Node na żądanie.
+
+Nie ma tutaj istotnej przewagi Neo4j.
+
+---
+
+#### 4. Pattern Matching
+
+SQL Graph daje coś, czego nie mamy tak naturalnie przy zwykłym CTE.
+
+Możemy opisywać strukturę:
+
+`Person → Company → Company`
+
+i wyszukiwać dane pasujące do wzorca za pomocą `MATCH`.
+
+SQL Server pozwala również określać kierunek Edge podczas wyszukiwania.
+
+---
+
+#### 5. Variable-length Traversal
+
+Możemy powiedzieć:
+
+**„Przejdź przez 1–4 poziomy relacji.”**
+
+SQL Graph obsługuje arbitrary-length patterns z kwantyfikatorami typu:
+
+`+`
+
+oraz:
+
+`{1,n}`.
+
+Pytanie biznesowe:
+
+**„Pokaż wszystkie podmioty znajdujące się maksymalnie 4 poziomy od klienta X.”**
+
+To nie jest argument wymagający Neo4j.
+
+SQL Server Graph jest do tego wystarczający.
+
+---
+
+#### 6. Shortest Path
+
+Bardzo istotna rzecz:
+
+SQL Server Graph posiada `SHORTEST_PATH`.
+
+Możemy więc zapytać:
+
+**„Jaka jest najkrótsza ścieżka pomiędzy klientem A i firmą X?”**
+
+Przykład:
+
+`A → Firma B → Jan → X`
+
+SQL Server potrafi również znaleźć shortest path z jednego źródła do wielu innych Node oraz ograniczyć maksymalną liczbę przejść.
+
+Czyli również:
+
+**Shortest Path sam w sobie nie jest wystarczającym argumentem za Neo4j.**
+
+---
+
+### Gdzie SQL Server Graph zaczyna mieć ograniczenia?
+
+Tu pojawia się właściwa granica.
+
+---
+
+#### 1. Wszystkie najkrótsze ścieżki
+
+Załóżmy:
+
+```text
+A → B → X
+
+A → C → X
+```
+
+Obie ścieżki mają długość 2.
+
+Biznes pyta:
+
+**„Pokaż wszystkie najkrótsze sposoby, w jakie A jest związane z X.”**
+
+SQL Server `SHORTEST_PATH` zwraca tylko jedną najkrótszą ścieżkę pomiędzy daną parą Node.
+
+Jeżeli istnieje kilka równie krótkich ścieżek, zwracana jest jedna z nich. Microsoft dokumentuje również, że funkcja nie zwraca wszystkich możliwych ścieżek.
+
+Tutaj możliwości zaczynają być bardziej ograniczone.
+
+---
+
+#### 2. Wiele alternatywnych ścieżek
+
+Pytanie KYC/AML:
+
+**„Na ile różnych sposobów A jest powiązane z X?”**
+
+Przykład:
+
+```text
+A → B → X
+
+A → C → X
+
+A → D → E → X
+```
+
+To znacznie ciekawsza informacja niż samo:
+
+**„A i X są powiązane.”**
+
+Możemy chcieć znaleźć:
+
+- wszystkie ścieżki,
+- kilka najlepszych ścieżek,
+- kilka niezależnych ścieżek,
+- K najkrótszych ścieżek.
+
+SQL Server Graph nie posiada rozbudowanej rodziny algorytmów tego typu.
+
+Neo4j GDS posiada m.in. Yen's Shortest Path, który może służyć do znajdowania wielu najkrótszych ścieżek.
+
+---
+
+#### 3. Weighted Path – ścieżka ważona
+
+To bardzo istotna różnica.
+
+Załóżmy:
+
+```text
+A --PEŁNOMOCNIK--> B --OWNER--> X
+```
+
+oraz:
+
+```text
+A --INNA_RELACJA--> C --INNA_RELACJA--> D --OWNER--> X
+```
+
+Biznes może kiedyś powiedzieć:
+
+**„Nie każda relacja jest równie istotna.”**
+
+Możemy nadać relacjom wagę:
+
+```text
+OWNER             = 1
+BENEFICJENT        = 1
+PEŁNOMOCNIK        = 3
+INNA_RELACJA       = 7
+```
+
+i zadać pytanie:
+
+**„Znajdź najbardziej istotną lub najmniej kosztowną ścieżkę, a nie po prostu ścieżkę posiadającą najmniej Edge.”**
+
+SQL Server `SHORTEST_PATH` jest algorytmem nieważonym – liczy długość ścieżki na podstawie liczby przejść.
+
+Neo4j GDS udostępnia natomiast algorytmy ważone, np.:
+
+- Dijkstra,
+- A*,
+- Bellman-Ford,
+- Delta-Stepping.
+
+To jest jedna z pierwszych bardzo wyraźnych przewag pełnej platformy grafowej.
+
+---
+
+#### 4. Bardziej skomplikowane Pattern Matching
+
+SQL Server `MATCH` jest bardzo użyteczny, ale ma ograniczenia.
+
+Przykładowo w samym wzorcu `MATCH` nie są wspierane operatory `OR` oraz `NOT`, a alias Edge nie może zostać ponownie użyty wewnątrz tego samego `MATCH`.
+
+Przy prostym:
+
+`Person → Company → Company`
+
+nie stanowi to problemu.
+
+Przy coraz bardziej złożonych warunkach biznesowych zaczynamy dokładać kolejne elementy T-SQL wokół grafowego `MATCH`.
+
+Neo4j/Cypher jest językiem projektowanym od początku właśnie do opisywania złożonych struktur grafowych.
+
+---
+
+#### 5. Cycle Detection
+
+Pytanie:
+
+**„Czy w strukturze występuje cykl?”**
+
+Przykład:
+
+`A → B → C → D → A`
+
+W SQL i SQL Graph da się takie struktury wykryć.
+
+Jeżeli jednak biznes zacznie pytać:
+
+**„Znajdź wszystkie interesujące cykliczne struktury w dużej sieci.”**
+
+wchodzimy już bardziej w analizę grafową niż pojedyncze zapytanie.
+
+SQL Graph nie dostarcza całej biblioteki algorytmów analizujących strukturę sieci.
+
+---
+
+## 3. Neo4j – natywna baza grafowa
+
+Neo4j również obsługuje wszystkie podstawowe przypadki:
+
+- Node,
+- Edge,
+- Expand Node,
+- Lazy Loading,
+- filtrowanie relacji,
+- Traversal,
+- Path Finding,
+- Shortest Path,
+- Pattern Matching.
+
+Dla tych podstawowych wymagań SQL Server Graph może być jednak wystarczający.
+
+Prawdziwa przewaga Neo4j zaczyna pojawiać się, gdy przechodzimy z:
+
+**eksploracji grafu**
+
+do:
+
+**analizy grafu.**
+
+---
+
+### 1. Zaawansowane Path Finding
+
+Neo4j Graph Data Science posiada rodzinę algorytmów Path Finding, m.in.:
+
+- Dijkstra,
+- A*,
+- Yen's Shortest Path,
+- BFS,
+- DFS,
+- Bellman-Ford,
+- Delta-Stepping,
+- All Pairs Shortest Path,
+- Maximum Flow,
+- Minimum Cost Maximum Flow.
+
+Pytania biznesowe mogą więc ewoluować od:
+
+**„Czy A jest połączone z B?”**
+
+do:
+
+**„Jakie są trzy najlepsze drogi A → B?”**
+
+**„Która droga posiada najmniejszy koszt?”**
+
+**„Jak wygląda alternatywna ścieżka, jeżeli pominiemy konkretną osobę?”**
+
+---
+
+### 2. Connected Components
+
+Pytanie biznesowe:
+
+**„Do jakiej całej sieci powiązań należy klient X?”**
+
+Przykład:
+
+```text
+A -- B -- C -- D
+
+X -- Y -- Z
+
+K -- L
+```
+
+Mamy trzy oddzielne sieci.
+
+Algorytm Weakly Connected Components może automatycznie przypisać Node do odpowiednich komponentów.
+
+Neo4j GDS posiada zarówno Weakly Connected Components, jak i Strongly Connected Components.
+
+SQL Server Graph nie posiada gotowego odpowiednika takiej biblioteki algorytmicznej.
+
+Możemy taki algorytm stworzyć samodzielnie, ale zaczynamy wtedy implementować Graph Analytics poza funkcjonalnością samej bazy.
+
+---
+
+### 3. Community Detection
+
+Pytanie:
+
+**„Czy możemy automatycznie znaleźć grupy klientów i firm, które są ze sobą szczególnie mocno powiązane?”**
+
+Przykład:
+
+```text
+A---B             X---Y
+|\ /|             |\ /|
+| C |-----P-------| Z |
+|/ \|             |/ \|
+D---E             W---Q
+```
+
+Całość jest jednym grafem.
+
+Ale algorytm może zauważyć:
+
+`Community 1 = A,B,C,D,E`
+
+`Community 2 = X,Y,Z,W,Q`
+
+Neo4j GDS posiada m.in.:
+
+- Louvain,
+- Leiden,
+- Label Propagation,
+- K-Core,
+- Strongly Connected Components,
+- Weakly Connected Components,
+- Triangle Count.
+
+To jest zupełnie inna klasa funkcjonalności niż `MATCH`.
+
+---
+
+### 4. Centrality
+
+Pytanie:
+
+**„Który podmiot jest najważniejszym elementem sieci?”**
+
+Nie musi to oznaczać:
+
+**„Kto posiada najwięcej relacji?”**
+
+Możemy mieć:
+
+```text
+Grupa A
+A -- B -- C
+          |
+          X
+          |
+D -- E -- F
+Grupa B
+```
+
+X może posiadać niewiele bezpośrednich relacji.
+
+Ale może być kluczowym łącznikiem pomiędzy dwiema dużymi grupami.
+
+Algorytmy takie jak Betweenness Centrality potrafią wykrywać właśnie takie Node.
+
+Neo4j GDS posiada m.in.:
+
+- Degree Centrality,
+- Betweenness Centrality,
+- Closeness Centrality,
+- PageRank,
+- HITS,
+- Bridges,
+- Articulation Points.
+
+Pytania biznesowe:
+
+**„Która osoba jest najbardziej centralnym elementem całej sieci?”**
+
+**„Która osoba pośredniczy pomiędzy największą liczbą innych podmiotów?”**
+
+---
+
+### 5. Bridges – mosty
+
+Przykład:
+
+`Grupa A ---- X ---- Grupa B`
+
+Jeżeli usuniemy konkretną relację lub Node i sieć rozpada się na dwie części, znaleźliśmy kluczowy element struktury.
+
+Pytanie biznesowe:
+
+**„Która relacja lub osoba łączy dwie pozornie niezależne grupy?”**
+
+Neo4j GDS posiada gotowe algorytmy Bridges oraz Articulation Points.
+
+To może być bardzo ciekawe w kontekście KYC/AML, ponieważ znaczenie podmiotu może wynikać nie z liczby jego relacji, ale z jego miejsca w całej strukturze.
+
+---
+
+### 6. Node Similarity
+
+Mamy:
+
+```text
+Firma A:
+Jan
+Anna
+Piotr
+XYZ
+```
+
+oraz:
+
+```text
+Firma B:
+Jan
+Anna
+Piotr
+DEF
+```
+
+Firmy A i B nie muszą być bezpośrednio połączone.
+
+Jednak ich otoczenie jest bardzo podobne.
+
+Pytanie biznesowe:
+
+**„Czy istnieją inne firmy posiadające niemal identyczną strukturę osób i podmiotów wokół siebie?”**
+
+Neo4j GDS posiada algorytmy Node Similarity i K-Nearest Neighbors, które porównują Node na podstawie ich sąsiedztwa lub properties.
+
+SQL Server Graph nie posiada gotowej warstwy tego typu analiz.
+
+---
+
+### 7. Common Neighbours
+
+Przykład:
+
+```text
+       Jan
+      /   \
+Firma A   Firma B
+      \   /
+       Anna
+```
+
+Pytanie:
+
+**„Ile wspólnych osób posiadają firmy A i B?”**
+
+Prosty wariant możemy oczywiście obsłużyć również SQL-em.
+
+GDS pozwala jednak używać Common Neighbours jako jednej z miar podobieństwa i elementu bardziej rozbudowanej analizy topologii.
+
+---
+
+### 8. Link Prediction
+
+To bardziej przyszłościowy przypadek.
+
+Pytanie:
+
+**„Czy struktura sieci sugeruje, że pomiędzy A i B może istnieć relacja, której obecnie nie posiadamy w danych?”**
+
+Nie oznacza to:
+
+**„relacja na pewno istnieje”.**
+
+To sygnał:
+
+**„warto tę parę zweryfikować”.**
+
+Neo4j GDS posiada zarówno proste algorytmy Topological Link Prediction, jak Common Neighbours czy Adamic-Adar, jak również pipeline'y Machine Learning do przewidywania brakujących relacji.
+
+To jest już funkcjonalność wychodząca daleko poza możliwości samego SQL Server Graph.
+
+---
+
+## Najważniejsze porównanie
+
+| Scenariusz                    | SQL + CTE         | SQL Server Graph                      | Neo4j / GDS           |
+| ----------------------------- | ----------------- | ------------------------------------- | --------------------- |
+| Bezpośrednie relacje          | bardzo dobre      | bardzo dobre                          | bardzo dobre          |
+| Expand Node                   | bardzo dobre      | bardzo dobre                          | bardzo dobre          |
+| Lazy Loading                  | bardzo dobre      | bardzo dobre                          | bardzo dobre          |
+| 2–4 poziomy                   | dobre             | bardzo dobre                          | bardzo dobre          |
+| Relation Type filtering       | bardzo dobre      | bardzo dobre                          | bardzo dobre          |
+| Add Node / Edge               | bardzo dobre      | bardzo dobre                          | bardzo dobre          |
+| Prosty Pattern Matching       | trudniejszy       | bardzo dobry                          | bardzo dobry          |
+| Variable-depth Traversal      | możliwy           | bardzo dobry                          | bardzo dobry          |
+| Path A → B                    | możliwy           | bardzo dobry                          | bardzo dobry          |
+| Jeden Shortest Path           | możliwy           | bardzo dobry                          | bardzo dobry          |
+| Wszystkie shortest paths      | własna logika     | ograniczone                           | bardzo dobre          |
+| Kilka alternatywnych paths    | własna logika     | ograniczone                           | bardzo dobre          |
+| Weighted Path                 | własny algorytm   | brak natywnego weighted shortest path | gotowe algorytmy      |
+| K-shortest paths              | własny algorytm   | brak gotowego mechanizmu              | Yen's algorithm       |
+| Cycle analysis                | własna logika     | możliwe, ale ograniczone analitycznie | naturalne / algorytmy |
+| Connected Components          | własny algorytm   | własny algorytm                       | GDS                   |
+| Community Detection           | własny algorytm   | własny algorytm                       | GDS                   |
+| Centrality                    | własny algorytm   | własny algorytm                       | GDS                   |
+| Bridges / Articulation Points | własny algorytm   | własny algorytm                       | GDS                   |
+| Node Similarity               | własna analiza    | własna analiza                        | GDS                   |
+| Link Prediction               | osobna analiza/ML | osobna analiza/ML                     | GDS                   |
+
+---
+
+## Gdzie jest rzeczywista granica?
+
+Jeżeli wymagania pozostają na poziomie:
+
+**„Pokaż klienta i jego relacje.”**
+
+**„Rozwiń kolejne Node.”**
+
+**„Pokaż 3–5 poziomów.”**
+
+**„Filtruj po typie relacji.”**
+
+**„Znajdź połączenie A → B.”**
+
+**„Pokaż jedną najkrótszą ścieżkę.”**
+
+to:
+
+### SQL Server Graph jest bardzo poważnym kandydatem.
+
+Nie ma tutaj technicznego wymagania wymuszającego Neo4j.
+
+---
+
+## Kiedy zaczyna się przewaga Neo4j?
+
+Kiedy pytania zaczynają wyglądać tak:
+
+**„Jakie są wszystkie lub trzy najlepsze ścieżki A → B?”**
+
+**„Która ścieżka jest najmniej kosztowna według wag relacji?”**
+
+**„Jakie naturalne grupy klientów występują w sieci?”**
+
+**„Który podmiot jest centralnym punktem sieci?”**
+
+**„Która osoba łączy dwie pozornie niezależne grupy?”**
+
+**„Które firmy posiadają bardzo podobne otoczenie?”**
+
+**„Czy struktura grafu sugeruje potencjalnie brakującą relację?”**
+
+W tym miejscu przestajemy budować wyłącznie:
+
+**Graph Visualization / Graph Exploration**
+
+a zaczynamy tworzyć:
+
+### **Graph Analytics Platform.**
+
+I to jest rzeczywisty punkt, w którym Neo4j zaczyna dawać przewagę nie tylko poprzez wygodniejszy model danych, ale również poprzez dostęp do gotowego ekosystemu algorytmów Graph Data Science. Neo4j GDS grupuje algorytmy m.in. w kategorie Path Finding, Centrality, Community Detection, Similarity i Link Prediction.
+
+---
+
+## Rekomendacja dla POC
+
+POC powinien więc porównać nie tylko:
+
+`Recursive CTE vs Neo4j`
+
+ale trzy poziomy:
+
+### 1. Recursive CTE
+
+Pokazuje:
+
+**co jesteśmy w stanie zrobić przy obecnym klasycznym podejściu SQL.**
+
+### 2. SQL Server Graph
+
+Pokazuje:
+
+**jak daleko możemy dojść, pozostając w ekosystemie SQL Server i korzystając z NODE, EDGE, MATCH i SHORTEST_PATH.**
+
+### 3. Neo4j
+
+Pokazuje:
+
+**jakie dodatkowe możliwości otrzymujemy po przejściu na natywny model grafowy oraz Graph Data Science.**
+
+Powinniśmy porównać:
+
+- złożoność zapytań,
+- łatwość implementacji kolejnych use case'ów,
+- wydajność dla kolejnych poziomów grafu,
+- zachowanie przy rosnącej liczbie Node/Edge,
+- Path Finding,
+- możliwość rozwoju rozwiązania,
+- ilość logiki, którą musimy implementować sami,
+- dostęp do gotowych algorytmów grafowych.
+
+### Wniosek
+
+**SQL Server Graph może być wystarczający bardzo długo, jeżeli aplikacja pozostanie przede wszystkim narzędziem do wizualizacji i eksploracji relacji.**
+
+**Neo4j zaczyna być strategicznie bardziej atrakcyjny wtedy, gdy system ma ewoluować w kierunku analizowania znaczenia i struktury całych sieci KYC/AML.**
+
+Dlatego decyzja technologiczna nie powinna zależeć tylko od obecnego pytania:
+
+**„Czy potrafimy narysować i edytowac graf?”**
+
+ale od pytania:
+
+### **„Czy docelowo chcemy tylko oglądać sieć, czy również automatycznie wyciągać wiedzę wynikającą z jej struktury?”**
